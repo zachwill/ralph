@@ -7,11 +7,19 @@ This project explores different patterns for autonomous coding loops.
 ### 1. General Worker (`agents/ralph.ts`)
 The most flexible pattern. It can both perform tasks and *identify* them. If `.ralph/TODO.md` is empty, it switches to "Find Work" mode to populate the task list.
 
+- Supports `--context/-c` to guide "Find Work" mode (only used when TODO.md is empty).
+- Supports `--dry-run` to print the exact would-run `pi` prompt with no side effects.
+
 ### 2. Specialized Refactorer (`agents/refactor.ts`)
 Focuses on a specific type of transformation. It uses a dedicated `.ralph/REFACTOR.md` to avoid interfering with general development tasks.
 
+- Supports `--dry-run` to print the exact would-run `pi` prompt with no side effects.
+
 ### 3. Goal-Directed Cleaner (`agents/cleanup.ts`)
 General-purpose cleanup. Instead of hardcoding rules, it reads `.ralph/CLEANUP_CONTEXT.md` to understand the goal (e.g., "Refactor all context providers to use useReducer"). If `.ralph/CLEANUP.md` is empty, it populates it with tasks derived from the context and the codebase.
+
+- Supports `--context/-c` and `--write-context` to provide (and optionally persist) cleanup goals.
+- Supports `--dry-run` to print the exact would-run `pi` prompt with no side effects.
 
 ## Shared Infrastructure
 
