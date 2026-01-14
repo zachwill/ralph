@@ -1,138 +1,131 @@
 # Ralph
 
-Autonomous coding loops powered by `pi` (the Pi Coding Agent).
+Autonomous coding loops powered by `pi`.
 
 ## Quick Start
 
 ```bash
-# Run the general worker
-bun agents/ralph.ts
-
-# Single iteration
-bun agents/ralph.ts --once
-
-# Preview prompt without running
-bun agents/ralph.ts --dry-run
-
-# Guide task generation
-bun agents/ralph.ts -c "Add error handling to the API layer"
+bun agents/ralph.ts                    # Work through todos
+bun agents/ralph.ts -c "Add tests"     # Guide task generation
+bun agents/ralph.ts --once             # Single iteration
+bun agents/ralph.ts --dry-run          # Preview prompt
 ```
 
-## The Agents
-
-| Agent | Task File | Behavior |
-|-------|-----------|----------|
-| `ralph.ts` | `.ralph/TODO.md` | General worker. Finds work when empty. |
-| `refactor.ts` | `.ralph/REFACTOR.md` | Refactors one file at a time. Exits after generating tasks for review. |
-| `cleanup.ts` | `.ralph/CLEANUP.md` | Goal-directed cleanup. Requires `--context` to generate tasks. |
-
-## How It Works
-
-1. **Check state** — Resume if uncommitted changes exist
-2. **Pick task** — Read next unchecked item from task file
-3. **Run pi** — Execute with timeout protection
-4. **Commit** — Auto-commit if agent forgets
-5. **Push** — Every N commits (default: 4)
-6. **Loop** — Until tasks complete or max iterations reached
-
-## Building Your Own Agent
-
-All agents use `runLoop()` from `core.ts`:
+## Writing a Loop
 
 ```typescript
 #!/usr/bin/env bun
-import { runLoop, runPi, withResume, type LoopState } from "./core";
+import { loop, work, generate, halt } from "./core";
 
-const PROMPT_WORK = `
-- Look at .ralph/TODO.md for the current task list
-- Pick a task and do it
-- Check off the item and commit
-- Exit
-`.trim();
-
-runLoop({
-  name: "my-agent",
+loop({
+  name: "my-loop",
   taskFile: ".ralph/TODO.md",
-  timeout: "5m",              // "30s", "5m", "1h", or number (seconds)
-  pushEvery: 4,               // Push every N commits
-  maxIterations: 400,         // Safety limit
-  supervisorEvery: 12,        // Optional: run supervisor every N commits
+  timeout: "5m",
 
-  decide(state: LoopState) {
+  run(state) {
     if (state.hasTodos) {
-      return { type: "work", prompt: withResume(PROMPT_WORK, state.hasUncommittedChanges) };
+      return work(`
+        - Look at .ralph/TODO.md
+        - Do the next task
+        - Check it off and commit
+        - Exit
+      `);
     }
-    return { type: "halt", reason: "No tasks remain" };
-  },
 
-  // Optional: supervisor runs every N commits (can do anything)
-  async supervisor(state) {
-    await runPi("Review recent work...", { 
-      timeout: "3m",
-      args: ["--model", "claude-opus-4-5"] 
-    });
+    return generate(`
+      - Add useful tasks to .ralph/TODO.md
+      - Commit and exit
+    `);
   },
 });
 ```
 
-### Actions
+That's it. The framework handles:
+- Resume logic (uncommitted changes)
+- Auto-commit if agent forgets
+- Push every 4 commits
+- Max 400 iterations safety limit
+- Timeout protection
 
-Your `decide()` function returns one of:
+## Actions
+
+| Action | What it does |
+|--------|--------------|
+| `work(prompt)` | Do work, continue looping |
+| `generate(prompt)` | Generate tasks, exit for review |
+| `halt(reason)` | Stop immediately |
+
+## State
 
 ```typescript
-{ type: "work", prompt: "..." }      // Do work, continue loop
-{ type: "generate", prompt: "..." }  // Generate tasks, exit for review
-{ type: "halt", reason: "..." }      // Stop entirely
+state.hasTodos        // boolean
+state.nextTodo        // string | null
+state.todos           // string[]
+state.context         // from --context/-c
+state.iteration       // current loop iteration
+state.commits         // commits this session
 ```
 
-### State
+## Different Model for Planning
 
 ```typescript
-interface LoopState {
-  iteration: number;
-  commitsSinceStart: number;
-  hasUncommittedChanges: boolean;
-  hasTodos: boolean;
-  nextTodo: string | null;
-  taskFileContent: string;
-  context: string | null;       // from --context/-c
-  isFirstIteration: boolean;
-}
+return generate(`...`, { 
+  model: "claude-opus-4-5",
+  timeout: "10m" 
+});
 ```
 
-## CLI Flags
+## Supervisor
 
-All agents support:
+Run a check every N commits:
 
-| Flag | Description |
-|------|-------------|
-| `--once` | Run single iteration then exit |
-| `--dry-run` | Print prompt without running |
-| `-c, --context` | Context for task generation |
+```typescript
+import { loop, work, generate, runPi } from "./core";
+
+loop({
+  name: "supervised",
+  taskFile: ".ralph/TODO.md",
+  timeout: "5m",
+
+  supervisor: {
+    every: 12,
+    async run(state) {
+      await runPi(`Review recent commits...`, { 
+        model: "claude-opus-4-5" 
+      });
+    },
+  },
+
+  run(state) {
+    // ...
+  },
+});
+```
+
+Or use the simple helper:
+
+```typescript
+import { loop, supervisor } from "./core";
+
+loop({
+  supervisor: supervisor(`Review work...`, { 
+    every: 12, 
+    model: "claude-opus-4-5" 
+  }),
+  // ...
+});
+```
+
+## Included Agents
+
+| Agent | Task File | Behavior |
+|-------|-----------|----------|
+| `ralph.ts` | `.ralph/TODO.md` | General worker |
+| `refactor.ts` | `.ralph/REFACTOR.md` | One file at a time |
+| `cleanup.ts` | `.ralph/CLEANUP.md` | Requires `--context` |
 
 ## Requirements
 
 - `pi` in PATH
 - Git repository
 - Bun runtime
-
-## Examples
-
-```bash
-# General work
-bun agents/ralph.ts
-bun agents/ralph.ts -c "Focus on test coverage"
-
-# Refactoring
-bun agents/refactor.ts
-bun agents/refactor.ts -c "Clean up the data layer"
-
-# Cleanup with specific goal
-bun agents/cleanup.ts -c "Remove all TODO comments"
-bun agents/cleanup.ts -c "Standardize error handling"
-
-# Supervised agent (every 12 commits)
-bun agents/examples/ralph-with-supervisor.ts
-```
-
-See `AGENTS.md` for detailed architecture docs.

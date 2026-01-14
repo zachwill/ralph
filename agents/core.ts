@@ -1,14 +1,19 @@
 #!/usr/bin/env bun
 /**
- * core.ts — The only file you need to build an agent loop.
+ * core.ts — Dead simple autonomous loops.
  *
- * Design principles:
- * 1. Agents run in a loop until they signal HALT (exit 1) or CONTINUE (exit 0)
- * 2. Markdown file for task tracking is first-class
- * 3. Push every N commits (configurable, always on)
- * 4. Optional supervisor function every M commits (can run anything)
- * 5. Resume logic is built-in (uncommitted changes)
- * 6. All the footguns are handled internally
+ * Usage:
+ *   import { loop, work, generate, halt } from "./core";
+ *
+ *   loop({
+ *     name: "my-loop",
+ *     taskFile: ".ralph/TODO.md",
+ *     timeout: "5m",
+ *     run(state) {
+ *       if (state.hasTodos) return work(`...`);
+ *       return generate(`...`);
+ *     },
+ *   });
  */
 
 import { $, spawn } from "bun";
@@ -19,20 +24,24 @@ import { dirname } from "path";
 // Types
 // ─────────────────────────────────────────────────────────────
 
-/** Options for pi execution */
-export interface PiOptions {
+export interface RunOptions {
+  model?: string;
   timeout?: number | string;
-  args?: string[]; // e.g., ["--model", "claude-opus-4-5"]
 }
 
-/** What the agent should do this iteration */
-export type AgentAction =
-  | { type: "work"; prompt: string; options?: PiOptions }
-  | { type: "generate"; prompt: string; options?: PiOptions } // generate tasks, then exit for review
-  | { type: "halt"; reason: string };
+export interface Action {
+  _type: "work" | "generate" | "halt";
+  _prompt?: string;
+  _reason?: string;
+  _options?: RunOptions;
+}
 
-/** Your agent definition */
-export interface AgentConfig {
+export interface SupervisorConfig {
+  every: number;
+  run: (state: State) => Promise<void>;
+}
+
+export interface LoopConfig {
   /** Name for banner/logs */
   name: string;
 
@@ -40,7 +49,7 @@ export interface AgentConfig {
   taskFile: string;
 
   /**
-   * Timeout per agent run.
+   * Timeout per run.
    * Accepts: number (seconds), or string like "30s", "5m", "1h"
    */
   timeout: number | string;
@@ -51,33 +60,23 @@ export interface AgentConfig {
   /** Max iterations before forced exit (default: 400) */
   maxIterations?: number;
 
-  /** Run supervisor every N commits (optional) */
-  supervisorEvery?: number;
+  /** Optional supervisor */
+  supervisor?: SupervisorConfig;
 
   /**
-   * Decide what to do this iteration.
-   * You get the current state, you return an action.
+   * The main decision function.
+   * Return work(), generate(), or halt().
    */
-  decide: (state: LoopState) => AgentAction;
-
-  /**
-   * Optional: supervisor function.
-   * Called when supervisorEvery triggers.
-   * Can run anything — use runPi() helper for pi commands, or spawn your own process.
-   */
-  supervisor?: (state: LoopState) => Promise<void>;
+  run: (state: State) => Action;
 }
 
-/** State passed to your decide() function */
-export interface LoopState {
+/** State passed to your run() function */
+export interface State {
   /** Current iteration (1-indexed) */
   iteration: number;
 
   /** Total commits since loop started */
-  commitsSinceStart: number;
-
-  /** Whether there are uncommitted changes (resume scenario) */
-  hasUncommittedChanges: boolean;
+  commits: number;
 
   /** Whether the task file has unchecked todos */
   hasTodos: boolean;
@@ -85,48 +84,68 @@ export interface LoopState {
   /** The text of the next unchecked todo (if any) */
   nextTodo: string | null;
 
-  /** Full content of the task file */
-  taskFileContent: string;
+  /** All unchecked todos */
+  todos: string[];
 
   /** Context from --context/-c flag (if provided) */
   context: string | null;
 
-  /** Whether this is the first iteration */
-  isFirstIteration: boolean;
+  /** Whether there are uncommitted changes (rarely needed) */
+  hasUncommittedChanges: boolean;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Action Creators
+// ─────────────────────────────────────────────────────────────
+
+/** Do work, then continue looping */
+export function work(prompt: string, options?: RunOptions): Action {
+  return { _type: "work", _prompt: prompt.trim(), _options: options };
+}
+
+/** Generate tasks, then exit for review */
+export function generate(prompt: string, options?: RunOptions): Action {
+  return { _type: "generate", _prompt: prompt.trim(), _options: options };
+}
+
+/** Stop the loop entirely */
+export function halt(reason: string): Action {
+  return { _type: "halt", _reason: reason };
+}
+
+/** Create a supervisor config from just a prompt */
+export function supervisor(
+  prompt: string,
+  options: { every: number; model?: string; timeout?: number | string }
+): SupervisorConfig {
+  return {
+    every: options.every,
+    async run() {
+      await runPi(prompt, { model: options.model, timeout: options.timeout });
+    },
+  };
 }
 
 // ─────────────────────────────────────────────────────────────
 // Time Parsing
 // ─────────────────────────────────────────────────────────────
 
-/**
- * Parse timeout value to milliseconds.
- * Accepts: number (seconds), or string like "30s", "5m", "1h"
- */
 function parseTimeout(value: number | string): number {
-  if (typeof value === "number") {
-    return value * 1000; // number = seconds
-  }
+  if (typeof value === "number") return value * 1000;
 
   const match = value.match(/^(\d+(?:\.\d+)?)\s*(s|m|h)$/i);
   if (!match) {
-    throw new Error(
-      `Invalid timeout format: "${value}". Use number (seconds) or string like "30s", "5m", "1h"`
-    );
+    throw new Error(`Invalid timeout: "${value}". Use "30s", "5m", "1h", or number (seconds)`);
   }
 
   const num = parseFloat(match[1]);
   const unit = match[2].toLowerCase();
 
   switch (unit) {
-    case "s":
-      return num * 1000;
-    case "m":
-      return num * 60 * 1000;
-    case "h":
-      return num * 60 * 60 * 1000;
-    default:
-      throw new Error(`Unknown time unit: ${unit}`);
+    case "s": return num * 1000;
+    case "m": return num * 60 * 1000;
+    case "h": return num * 60 * 60 * 1000;
+    default: throw new Error(`Unknown time unit: ${unit}`);
   }
 }
 
@@ -150,7 +169,7 @@ const getArgValue = (flag: string, ...aliases: string[]): string | null => {
 // Git Operations
 // ─────────────────────────────────────────────────────────────
 
-const hasUncommittedChanges = async () =>
+const getUncommittedChanges = async () =>
   (await $`git status --porcelain`.text()).trim().length > 0;
 
 const recentCommit = async (withinMs = 15_000) => {
@@ -171,7 +190,7 @@ const getCommitCount = async () => {
 };
 
 async function autoCommit(message: string): Promise<void> {
-  console.log("\n📦 Auto-committing uncommitted changes...");
+  console.log("\n📦 Auto-committing...");
   await $`git add -A`.quiet();
   await $`git commit -m ${message}`.quiet();
 }
@@ -181,16 +200,16 @@ async function push(): Promise<void> {
   try {
     await $`git push origin main`;
   } catch (e) {
-    console.log("⚠️  Push failed (non-fatal):", e);
+    console.log("⚠️  Push failed (non-fatal)");
   }
 }
 
 async function ensureCommit(fallbackMessage: string): Promise<boolean> {
   if (await recentCommit()) {
-    console.log("✅ Agent committed successfully");
+    console.log("✅ Committed");
     return true;
   }
-  if (await hasUncommittedChanges()) {
+  if (await getUncommittedChanges()) {
     await autoCommit(fallbackMessage);
     return true;
   }
@@ -211,13 +230,10 @@ const ensureFile = (path: string, defaultContent = "") => {
   }
 };
 
-const hasUncheckedTodos = (content: string) =>
-  /^[\s]*[-*+]\s*\[ \]/m.test(content);
-
-const getNextTodo = (content: string): string | null => {
-  const match = content.match(/^\s*[-*+]\s*\[ \]\s+(.*)$/m);
-  return match ? match[1].trim() : null;
-};
+function getUncheckedTodos(content: string): string[] {
+  const matches = content.matchAll(/^\s*[-*+]\s*\[ \]\s+(.*)$/gm);
+  return Array.from(matches, (m) => m[1].trim());
+}
 
 // ─────────────────────────────────────────────────────────────
 // Display
@@ -227,17 +243,33 @@ const timestamp = () => new Date().toLocaleString();
 
 function printBanner(name: string): void {
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-  console.log(`${name.toUpperCase()} — Agent Loop`);
+  console.log(`${name.toUpperCase()}`);
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 }
 
 function printIteration(n: number, max: number): void {
-  console.log(`\n┌─ Iteration #${n}/${max} — ${timestamp()}`);
+  console.log(`\n┌─ Iteration ${n}/${max} — ${timestamp()}`);
   console.log("└──────────────────────────────────────\n");
 }
 
 // ─────────────────────────────────────────────────────────────
-// Agent Runner (exported for use in supervisor functions)
+// Resume Logic
+// ─────────────────────────────────────────────────────────────
+
+const RESUME_SUFFIX = `
+
+---
+NOTE: There are uncommitted changes from a previous run.
+Run "git diff" to see the current state.
+Finish the in-progress work and commit.
+`.trim();
+
+function withResume(prompt: string, hasChanges: boolean): string {
+  return hasChanges ? `${prompt}\n\n${RESUME_SUFFIX}` : prompt;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Pi Runner (exported for supervisor use)
 // ─────────────────────────────────────────────────────────────
 
 let _piPath: string | null = null;
@@ -245,28 +277,20 @@ let _piPath: string | null = null;
 async function getPiPath(): Promise<string> {
   if (!_piPath) {
     _piPath = (await $`which pi`.text()).trim();
-    if (!_piPath) {
-      throw new Error("Could not find 'pi' in PATH");
-    }
+    if (!_piPath) throw new Error("Could not find 'pi' in PATH");
   }
   return _piPath;
 }
 
-/**
- * Run pi with a prompt. Exported so supervisor functions can use it.
- */
 export async function runPi(
   prompt: string,
-  options?: {
-    timeout?: number | string;
-    args?: string[]; // additional args like "--model", "claude-opus-4-5"
-  }
+  options?: { model?: string; timeout?: number | string }
 ): Promise<void> {
   const piPath = await getPiPath();
   const timeoutMs = options?.timeout ? parseTimeout(options.timeout) : 300_000;
-  const extraArgs = options?.args ?? [];
+  const args = options?.model ? ["--model", options.model] : [];
 
-  const proc = spawn([piPath, "-p", prompt, ...extraArgs], {
+  const proc = spawn([piPath, "-p", prompt, ...args], {
     stdout: "inherit",
     stderr: "inherit",
   });
@@ -280,9 +304,7 @@ export async function runPi(
   clearTimeout(timeout);
 }
 
-/**
- * Run an arbitrary command. Exported so supervisor functions can use it.
- */
+/** Run an arbitrary command (for advanced supervisor use) */
 export async function runCommand(
   command: string[],
   options?: { timeout?: number | string }
@@ -307,24 +329,22 @@ export async function runCommand(
 // The Main Loop
 // ─────────────────────────────────────────────────────────────
 
-export async function runLoop(config: AgentConfig): Promise<never> {
+export async function loop(config: LoopConfig): Promise<never> {
   // Validate
   if (!existsSync(".git")) {
     console.error("❌ Not a git repository");
     process.exit(1);
   }
 
-  // Parse timeout
-  const timeoutMs = parseTimeout(config.timeout);
+  // Parse config
+  const defaultTimeoutMs = parseTimeout(config.timeout);
+  const pushEvery = config.pushEvery ?? 4;
+  const maxIterations = config.maxIterations ?? 400;
 
-  // CLI flags (handled internally)
+  // CLI flags
   const once = hasFlag("--once");
   const dryRun = hasFlag("--dry-run");
   const context = getArgValue("--context", "-c");
-
-  // Defaults
-  const pushEvery = config.pushEvery ?? 4;
-  const maxIterations = config.maxIterations ?? 400;
 
   // Ensure task file exists
   ensureFile(config.taskFile, "# Tasks\n\n");
@@ -332,83 +352,80 @@ export async function runLoop(config: AgentConfig): Promise<never> {
   printBanner(config.name);
 
   let iteration = 0;
-  let commitsSinceStart = 0;
+  let commits = 0;
   const startCommitCount = await getCommitCount();
 
   while (true) {
     iteration++;
 
-    // Check max iterations
     if (iteration > maxIterations) {
-      console.log(`\n🛑 Reached max iterations (${maxIterations}). Exiting.`);
+      console.log(`\n🛑 Max iterations (${maxIterations}) reached`);
       process.exit(0);
     }
 
     printIteration(iteration, maxIterations);
 
-    // Build current state
+    // Build state
     const taskFileContent = readFile(config.taskFile);
-    const state: LoopState = {
+    const todos = getUncheckedTodos(taskFileContent);
+    const hasUncommittedChanges = await getUncommittedChanges();
+
+    const state: State = {
       iteration,
-      commitsSinceStart,
-      hasUncommittedChanges: await hasUncommittedChanges(),
-      hasTodos: hasUncheckedTodos(taskFileContent),
-      nextTodo: getNextTodo(taskFileContent),
-      taskFileContent,
+      commits,
+      hasTodos: todos.length > 0,
+      nextTodo: todos[0] ?? null,
+      todos,
       context,
-      isFirstIteration: iteration === 1,
+      hasUncommittedChanges,
     };
 
     // Check if supervisor should run
-    if (
-      config.supervisorEvery &&
-      config.supervisor &&
-      commitsSinceStart > 0 &&
-      commitsSinceStart % config.supervisorEvery === 0
-    ) {
+    if (config.supervisor && commits > 0 && commits % config.supervisor.every === 0) {
       console.log("🔮 Running supervisor...");
 
       if (dryRun) {
-        console.log("\n(dry-run) Would run supervisor function");
+        console.log("(dry-run) Would run supervisor");
         process.exit(0);
       }
 
-      await config.supervisor(state);
+      await config.supervisor.run(state);
       await ensureCommit("chore: supervisor");
 
-      // Update commit count after supervisor
       const currentCount = await getCommitCount();
-      commitsSinceStart = currentCount - startCommitCount;
+      commits = currentCount - startCommitCount;
       continue;
     }
 
-    // Get the action from user's decide function
-    const action = config.decide(state);
+    // Get action from user's run function
+    const action = config.run(state);
 
-    // Handle the action
-    switch (action.type) {
-      case "halt":
-        console.log(`\n✅ ${action.reason}`);
+    // Handle action
+    switch (action._type) {
+      case "halt": {
+        console.log(`\n✅ ${action._reason}`);
         process.exit(0);
+      }
 
       case "generate": {
         console.log("🔍 Generating tasks...");
+        const prompt = withResume(action._prompt!, hasUncommittedChanges);
+        const timeoutMs = action._options?.timeout
+          ? parseTimeout(action._options.timeout)
+          : defaultTimeoutMs;
+
         if (dryRun) {
-          console.log("\n(dry-run) Would run prompt:\n");
-          console.log(action.prompt);
-          if (action.options?.args?.length) {
-            console.log(`\nWith args: ${action.options.args.join(" ")}`);
+          console.log("\n(dry-run) Prompt:\n");
+          console.log(prompt);
+          if (action._options?.model) {
+            console.log(`\nModel: ${action._options.model}`);
           }
           process.exit(0);
         }
-        await runPi(action.prompt, {
-          timeout: action.options?.timeout ?? timeoutMs,
-          args: action.options?.args,
-        });
+
+        await runPi(prompt, { model: action._options?.model, timeout: timeoutMs });
         await ensureCommit("chore: generate tasks");
-        console.log(
-          `\n✅ Tasks written to ${config.taskFile} — exiting for review`
-        );
+        console.log(`\n✅ Tasks written to ${config.taskFile}`);
         process.exit(0);
       }
 
@@ -416,72 +433,46 @@ export async function runLoop(config: AgentConfig): Promise<never> {
         if (state.nextTodo) {
           console.log(`▶ Task: ${state.nextTodo}`);
         }
+
+        const prompt = withResume(action._prompt!, hasUncommittedChanges);
+        const timeoutMs = action._options?.timeout
+          ? parseTimeout(action._options.timeout)
+          : defaultTimeoutMs;
+
         if (dryRun) {
-          console.log("\n(dry-run) Would run prompt:\n");
-          console.log(action.prompt);
-          if (action.options?.args?.length) {
-            console.log(`\nWith args: ${action.options.args.join(" ")}`);
+          console.log("\n(dry-run) Prompt:\n");
+          console.log(prompt);
+          if (action._options?.model) {
+            console.log(`\nModel: ${action._options.model}`);
           }
           process.exit(0);
         }
-        await runPi(action.prompt, {
-          timeout: action.options?.timeout ?? timeoutMs,
-          args: action.options?.args,
-        });
+
+        await runPi(prompt, { model: action._options?.model, timeout: timeoutMs });
         await ensureCommit(`chore: iteration ${iteration}`);
         break;
       }
     }
 
-    // Track commits
+    // Update commit count
     const currentCount = await getCommitCount();
-    commitsSinceStart = currentCount - startCommitCount;
+    commits = currentCount - startCommitCount;
 
     // Push periodically
-    if (commitsSinceStart > 0 && commitsSinceStart % pushEvery === 0) {
+    if (commits > 0 && commits % pushEvery === 0) {
       await push();
     }
 
-    // Check if we should exit after work (no more todos)
-    const updatedContent = readFile(config.taskFile);
-    if (!hasUncheckedTodos(updatedContent) && action.type === "work") {
+    // Check if done
+    const updatedTodos = getUncheckedTodos(readFile(config.taskFile));
+    if (updatedTodos.length === 0 && action._type === "work") {
       console.log("\n✅ All tasks complete");
       process.exit(0);
     }
 
     if (once) {
-      console.log("\n(--once) Exiting after single iteration");
+      console.log("\n(--once) Single iteration complete");
       process.exit(0);
     }
   }
 }
-
-// ─────────────────────────────────────────────────────────────
-// Prompt Helpers (commonly needed patterns)
-// ─────────────────────────────────────────────────────────────
-
-/** Standard suffix to append when there are uncommitted changes */
-export const RESUME_SUFFIX = `
-NOTE: There are uncommitted changes from a previous execution.
-Run "git diff" to understand the state of work.
-Finish/repair the in-progress work and commit.
-`.trim();
-
-/** Wrap a base prompt with resume logic if needed */
-export const withResume = (prompt: string, hasChanges: boolean) =>
-  hasChanges ? `${prompt}\n\n${RESUME_SUFFIX}` : prompt;
-
-/** Build a prompt that includes task file context */
-export const withTaskFile = (taskFile: string, instructions: string) =>
-  `
-Your task file is: ${taskFile}
-Use this file to track what needs to be done.
-You can see recent work via: git log -n 5 --oneline
-
-${instructions}
-
-After completing work:
-- Update ${taskFile} to reflect what you've done
-- git add -A && git commit -m "<brief description>"
-- Exit
-`.trim();

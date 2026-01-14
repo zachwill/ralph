@@ -1,181 +1,153 @@
 # Agent Architectures
 
-This project explores different patterns for autonomous coding loops.
+This project provides a simple framework for autonomous coding loops.
 
-## Core Architecture (`agents/core.ts`)
-
-All agents use `runLoop()` from `core.ts`. You define:
+## Core API
 
 ```typescript
-import { runLoop, runPi, runCommand, withResume, type LoopState } from "./core";
+import { loop, work, generate, halt, supervisor, runPi, runCommand } from "./core";
+```
 
-runLoop({
-  name: "my-agent",           // For banner/logs
-  taskFile: ".ralph/TODO.md", // Where tasks live
-  timeout: "5m",              // Per-run timeout: number (seconds) or "30s", "5m", "1h"
-  pushEvery: 4,               // Push every N commits (default: 4)
-  maxIterations: 400,         // Safety limit (default: 400)
-  supervisorEvery: 12,        // Optional: run supervisor every N commits
+### loop()
 
-  decide(state: LoopState) {
-    // Return one of:
-    // - { type: "work", prompt: "..." }      → do work, continue loop
-    // - { type: "generate", prompt: "..." }  → generate tasks, then exit for review
-    // - { type: "halt", reason: "..." }      → stop the loop entirely
-  },
+The main function. Runs until done.
 
-  // Optional: supervisor function (can run anything)
-  async supervisor(state: LoopState) {
-    // Run pi with different options
-    await runPi("Review the work...", { timeout: "3m", args: ["--model", "claude-opus-4-5"] });
+```typescript
+loop({
+  name: "my-loop",              // For logs
+  taskFile: ".ralph/TODO.md",   // Task tracking
+  timeout: "5m",                // Per-run timeout
+  pushEvery: 4,                 // Push every N commits (default: 4)
+  maxIterations: 400,           // Safety limit (default: 400)
+  supervisor: { ... },          // Optional
 
-    // Or run a completely different command
-    await runCommand(["bun", "agents/supervisor.ts"]);
+  run(state) {
+    // Return work(), generate(), or halt()
   },
 });
 ```
 
-### LoopState
-
-Your `decide()` function receives:
+### Actions
 
 ```typescript
-interface LoopState {
-  iteration: number;           // Current loop iteration (1-indexed)
-  commitsSinceStart: number;   // Commits made this session
+// Do work, continue looping
+work(prompt, options?)
+
+// Generate tasks, then exit for review
+generate(prompt, options?)
+
+// Stop the loop
+halt(reason)
+```
+
+Options: `{ model?: string, timeout?: string | number }`
+
+### State
+
+```typescript
+interface State {
+  iteration: number;
+  commits: number;
+  hasTodos: boolean;
+  nextTodo: string | null;
+  todos: string[];
+  context: string | null;
   hasUncommittedChanges: boolean;
-  hasTodos: boolean;           // Any unchecked items in taskFile?
-  nextTodo: string | null;     // Text of next unchecked todo
-  taskFileContent: string;     // Full content of taskFile
-  context: string | null;      // From --context/-c flag
-  isFirstIteration: boolean;
 }
 ```
 
-### Timeout Format
+### Supervisor
+
+Two ways to define a supervisor:
 
 ```typescript
-timeout: 300          // 300 seconds
-timeout: "30s"        // 30 seconds
-timeout: "5m"         // 5 minutes
-timeout: "1h"         // 1 hour
-```
-
-### Exit Semantics
-
-- **`{ type: "work" }`** — Do work, loop continues
-- **`{ type: "generate" }`** — Generate tasks, then exit so user can review
-- **`{ type: "halt" }`** — Stop entirely with a reason
-
-### Built-in Behaviors
-
-- **Auto-commit**: If agent forgets to commit, we commit for them
-- **Resume detection**: Uncommitted changes trigger resume logic
-- **Push every N commits**: Always on, configurable via `pushEvery`
-- **Max iterations**: Safety limit (default 400) prevents runaway loops
-- **Timeout protection**: Kills runaway agents
-- **Task file auto-creation**: Created if missing
-
-## Supervisor Pattern
-
-The `supervisor` function runs every N commits and can do anything:
-
-```typescript
-runLoop({
-  // ...
-  supervisorEvery: 12,
-
-  async supervisor(state) {
-    // Option 1: Different prompt with different model
-    await runPi("Review recent work...", {
-      timeout: "3m",
-      args: ["--model", "claude-opus-4-5"],
-    });
-
-    // Option 2: Run a different script entirely
-    await runCommand(["bun", "agents/code-review.ts"]);
-
-    // Option 3: Any shell command
-    await runCommand(["./scripts/run-tests.sh"]);
+// Full control
+supervisor: {
+  every: 12,
+  async run(state) {
+    await runPi(`...`, { model: "claude-opus-4-5" });
+    // or
+    await runCommand(["bun", "scripts/review.ts"]);
   },
-});
+}
+
+// Simple (just a prompt)
+supervisor: supervisor(`Review work...`, { 
+  every: 12, 
+  model: "claude-opus-4-5" 
+})
 ```
 
-See `agents/examples/ralph-with-supervisor.ts` for a full example.
+### Helpers
+
+```typescript
+// Run pi with options
+await runPi(prompt, { model?: string, timeout?: string })
+
+// Run any command
+await runCommand(["bun", "script.ts"], { timeout?: string })
+```
+
+## Built-in Behaviors
+
+1. **Resume** — Uncommitted changes? Framework appends resume instructions.
+2. **Auto-commit** — Agent forgot to commit? We do it.
+3. **Push every N** — Default 4 commits.
+4. **Max iterations** — Default 400, prevents runaway loops.
+5. **Timeout** — Kills stuck agents.
+6. **Task file** — Auto-created if missing.
+
+## Timeout Format
+
+```typescript
+timeout: 300      // seconds
+timeout: "30s"
+timeout: "5m"
+timeout: "1h"
+```
+
+## CLI Flags
+
+All loops support:
+
+| Flag | Description |
+|------|-------------|
+| `--once` | Single iteration |
+| `--dry-run` | Print prompt, don't run |
+| `-c, --context` | Context for task generation |
 
 ## Agents
 
-### 1. General Worker (`agents/ralph.ts`)
+### ralph.ts
 
-Works through `.ralph/TODO.md`. When empty, finds new work.
+General purpose. Works through `.ralph/TODO.md`. Finds work when empty.
 
 ```bash
-bun agents/ralph.ts              # Work through todos or find work
-bun agents/ralph.ts -c "add X"   # Guide task generation with context
-bun agents/ralph.ts --once       # Single iteration
-bun agents/ralph.ts --dry-run    # Print prompt without running
+bun agents/ralph.ts
+bun agents/ralph.ts -c "Focus on tests"
 ```
 
-### 2. Refactorer (`agents/refactor.ts`)
+### refactor.ts
 
-Focused on refactoring one file at a time from `.ralph/REFACTOR.md`.
+Refactors one file at a time from `.ralph/REFACTOR.md`.
 
 ```bash
 bun agents/refactor.ts
-bun agents/refactor.ts -c "focus on the API layer"
+bun agents/refactor.ts -c "Clean up the API layer"
 ```
 
-### 3. Cleanup (`agents/cleanup.ts`)
+### cleanup.ts
 
-Goal-directed cleanup. **Requires** `--context` to generate new tasks.
+Goal-directed cleanup. Requires `--context` to generate tasks.
 
 ```bash
-bun agents/cleanup.ts -c "remove all console.logs"
-bun agents/cleanup.ts -c "standardize error handling"
+bun agents/cleanup.ts -c "Remove TODO comments"
 ```
 
-## Creating New Agents
+## Examples
 
-1. Import from `core.ts`
-2. Define your prompts
-3. Call `runLoop()` with your config
+See `agents/examples/` for:
 
-```typescript
-#!/usr/bin/env bun
-import { runLoop, withResume, type LoopState } from "./core";
-
-const PROMPT_WORK = `...`;
-const PROMPT_GENERATE = (ctx: string) => `...`;
-
-runLoop({
-  name: "my-agent",
-  taskFile: ".ralph/MY_TASKS.md",
-  timeout: "5m",
-  pushEvery: 4,
-
-  decide(state: LoopState) {
-    if (state.hasTodos) {
-      return { type: "work", prompt: withResume(PROMPT_WORK, state.hasUncommittedChanges) };
-    }
-    if (!state.context) {
-      return { type: "halt", reason: "Need --context to generate tasks" };
-    }
-    return { type: "generate", prompt: PROMPT_GENERATE(state.context) };
-  },
-});
-```
-
-## Exported Helpers
-
-```typescript
-import {
-  runLoop,          // Main loop runner
-  runPi,            // Run pi with prompt + options
-  runCommand,       // Run any command
-  withResume,       // Append resume instructions if uncommitted changes
-  RESUME_SUFFIX,    // Raw resume text
-  withTaskFile,     // Build prompt with task file context
-  type LoopState,   // State type for decide()
-  type PiOptions,   // Options for runPi()
-} from "./core";
-```
+- `ralph-with-planner.ts` — Different model for task generation
+- `ralph-with-supervisor.ts` — Full supervisor with custom logic
+- `ralph-with-simple-supervisor.ts` — Supervisor from just a prompt

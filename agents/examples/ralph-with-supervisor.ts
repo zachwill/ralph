@@ -1,119 +1,58 @@
 #!/usr/bin/env bun
 /**
- * Example: ralph with a supervisor that runs every 12 commits.
- *
- * The supervisor can run anything — a different prompt, a different model,
- * or even a completely different script.
+ * Example: ralph with a supervisor that reviews work every 12 commits.
  */
+import { loop, work, generate, runPi } from "../core";
 
-import {
-  runLoop,
-  runPi,
-  runCommand,
-  withResume,
-  type LoopState,
-} from "../core";
-
-// ─────────────────────────────────────────────────────────────
-// Prompts
-// ─────────────────────────────────────────────────────────────
-
-const PROMPT_WORK = `
-- Look at .ralph/TODO.md for the current task list
-- Pick a logical chunk of work and do it
-- Update .ralph/TODO.md to reflect what you've done (check off completed items)
-- Commit: git add -A && git commit -m "<what you did>"
-- Exit after committing
-`.trim();
-
-const PROMPT_FIND_WORK = `
-- .ralph/TODO.md has no actionable items. Wipe it clean and start fresh.
-- Look through the codebase and add useful work items to .ralph/TODO.md
-- Commit: git add -A && git commit -m "<what you added>"
-- Exit after committing. Don't do any coding yet.
-`.trim();
-
-const promptFindWorkWithContext = (context: string) => `
-- .ralph/TODO.md has no actionable items. Wipe it clean and start fresh.
-- Use the following goal as context for what tasks to add:
-
-<instructions>
-${context}
-</instructions>
-
-TASK:
-- Look through the codebase and add useful work items to .ralph/TODO.md
-- Commit: git add -A && git commit -m "<what you added>"
-- Exit after committing. Don't do any coding yet.
-`.trim();
-
-// ─────────────────────────────────────────────────────────────
-// Supervisor Prompt (runs with a different model)
-// ─────────────────────────────────────────────────────────────
-
-const SUPERVISOR_PROMPT = `
-You are a supervisor reviewing recent work. Run:
-
-  git log -n 12 --oneline
-
-Review the recent commits and the current state of the codebase.
-
-Your job:
-1. Check if work is going in a productive direction
-2. Look for any issues, bugs, or regressions
-3. Update .ralph/TODO.md if priorities should change
-4. If everything looks good, just note it and exit
-
-If you make changes:
-- git add -A && git commit -m "supervisor: <what you adjusted>"
-- Exit
-`.trim();
-
-// ─────────────────────────────────────────────────────────────
-// Agent Definition
-// ─────────────────────────────────────────────────────────────
-
-runLoop({
+loop({
   name: "ralph-supervised",
   taskFile: ".ralph/TODO.md",
   timeout: "5m",
-  pushEvery: 4,
-  supervisorEvery: 12,
 
-  decide(state: LoopState) {
-    const { hasTodos, hasUncommittedChanges, context } = state;
+  supervisor: {
+    every: 12,
+    async run(state) {
+      console.log(`📊 Reviewing after ${state.commits} commits`);
 
-    if (hasTodos) {
-      return {
-        type: "work",
-        prompt: withResume(PROMPT_WORK, hasUncommittedChanges),
-      };
-    }
+      await runPi(`
+        You are a supervisor reviewing recent work.
 
-    const generatePrompt = context
-      ? promptFindWorkWithContext(context)
-      : PROMPT_FIND_WORK;
+        Run: git log -n 12 --oneline
 
-    return {
-      type: "generate",
-      prompt: withResume(generatePrompt, hasUncommittedChanges),
-    };
+        Your job:
+        1. Check if work is going in a productive direction
+        2. Look for any issues, bugs, or regressions
+        3. Update .ralph/TODO.md if priorities should change
+        4. If everything looks good, just note it and exit
+
+        If you make changes:
+        - git add -A && git commit -m "supervisor: <adjustment>"
+        - Exit
+      `, { model: "claude-opus-4-5", timeout: "5m" });
+    },
   },
 
-  // Supervisor runs every 12 commits
-  async supervisor(state: LoopState) {
-    console.log(`📊 Supervisor check after ${state.commitsSinceStart} commits`);
+  run(state) {
+    if (state.hasTodos) {
+      return work(`
+        - Look at .ralph/TODO.md for the current task list
+        - Pick a logical chunk of work and do it
+        - Update .ralph/TODO.md (check off completed items)
+        - Commit: git add -A && git commit -m "<what you did>"
+        - Exit after committing
+      `);
+    }
 
-    // Example 1: Run pi with a different model
-    await runPi(SUPERVISOR_PROMPT, {
-      timeout: "3m",
-      args: ["--model", "claude-sonnet-4-20250514"],
-    });
+    const contextBlock = state.context
+      ? `Use this goal as context:\n\n<instructions>\n${state.context}\n</instructions>\n\n`
+      : "";
 
-    // Example 2: Or run a completely different script
-    // await runCommand(["bun", "agents/supervisor-script.ts"], { timeout: "2m" });
-
-    // Example 3: Or run any shell command
-    // await runCommand(["./scripts/check-quality.sh"]);
+    return generate(`
+      .ralph/TODO.md has no actionable items. Wipe it clean and start fresh.
+      ${contextBlock}
+      - Look through the codebase and add useful work items to .ralph/TODO.md
+      - Commit: git add -A && git commit -m "<what you added>"
+      - Exit after committing. Don't do any coding yet.
+    `);
   },
 });
