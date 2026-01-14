@@ -1,140 +1,84 @@
 #!/usr/bin/env bun
-import { existsSync } from "fs";
-import {
-  hasFlag,
-  getArgValue,
-  printBanner,
-  printIteration,
-  hasUncommittedChanges,
-  ensureCommit,
-  hasUncheckedTodos,
-  assertPrerequisites,
-  runAgent,
-  dryRun,
-  PROMPT_RESUME,
-} from "./internal";
+/**
+ * refactor.ts — Focused refactoring agent
+ *
+ * Works through .ralph/REFACTOR.md one file at a time.
+ * When empty: generates refactor tasks (optionally guided by --context), then exits for review.
+ */
 
-// ─────────────────────────────────────────────────────────────
-// Configuration
-// ─────────────────────────────────────────────────────────────
-
-const ONCE = hasFlag("--once");
-const DRY_RUN = hasFlag("--dry-run");
-const TIMEOUT_MS = parseInt(Bun.env.WORKER_TIMEOUT || "300") * 1000;
-const REFACTOR_FILE = ".ralph/REFACTOR.md";
-
-const providedContext = getArgValue("--context", "-c");
-
+import { runLoop, withResume, type LoopState } from "./core";
 
 // ─────────────────────────────────────────────────────────────
 // Prompts
 // ─────────────────────────────────────────────────────────────
 
 const PROMPT_REFACTOR = `
-Your task is to refactor ONE file listed in .ralph/REFACTOR.md (the next unchecked item). You must complete all steps before committing:
+Your task is to refactor ONE file listed in .ralph/REFACTOR.md (the next unchecked item).
 
-1. Read .ralph/REFACTOR.md and pick the first unchecked item in the TODO list
-2. Refactor that file (keep behavior stable; avoid feature work)
-3. Improve readability: extract in-file helpers/subcomponents, reduce nesting, clarify naming
-4. Verify changes (bun import, typecheck, or minimal smoke)
+1. Read .ralph/REFACTOR.md and pick the first unchecked item
+2. Refactor that file (keep behavior stable; no feature work)
+3. Improve readability: extract helpers, reduce nesting, clarify naming
+4. Verify changes work (typecheck, build, etc.)
 5. Check off ONLY that item in .ralph/REFACTOR.md
 
-Only after ALL the above work is done:
-- Commit: git add -A && git commit -m "refactor: <scope of change>"
-- Then exit
-
-DO NOT commit until the refactor is complete and working.
+When done:
+- git add -A && git commit -m "refactor: <scope>"
+- Exit
 `.trim();
 
-const PROMPT_FIND_REFACTOR_WORK = `
+const PROMPT_FIND_WORK = `
 - .ralph/REFACTOR.md has no actionable items. Wipe it clean and start fresh.
-- Look through the codebase and add useful refactor work items to .ralph/REFACTOR.md.
-- Focus on refactors (readability, structure, dead code removal), not on any specific previous-project theme.
-- Format each item as a checkbox followed by a backtick-wrapped file path, e.g.:
-  - [ ] \`src/components/Foo.tsx\`
+- Look through the codebase and identify files that need refactoring
+- Focus on: readability, structure, dead code removal
+- Format each item as: - [ ] \`path/to/file.ts\`
 - Commit: git add -A && git commit -m "chore: seed refactor tasks"
 - Exit after committing. Don't do any refactoring yet.
 `.trim();
 
-const promptFindRefactorWorkWithContext = (context: string) => `
+const promptFindWorkWithContext = (context: string) => `
 - .ralph/REFACTOR.md has no actionable items. Wipe it clean and start fresh.
-- Use the following goal as context for what refactor tasks to add (treat it like instructions from the user):
+- Use the following goal as context:
 
 <instructions>
 ${context}
 </instructions>
 
 TASK:
-- Look through the codebase and add useful refactor work items to .ralph/REFACTOR.md.
-- Format each item as a checkbox followed by a backtick-wrapped file path, e.g.:
-  - [ ] \`src/components/Foo.tsx\`
+- Look through the codebase and identify files that need refactoring
+- Format each item as: - [ ] \`path/to/file.ts\`
 - Commit: git add -A && git commit -m "chore: seed refactor tasks"
 - Exit after committing. Don't do any refactoring yet.
 `.trim();
 
 // ─────────────────────────────────────────────────────────────
-// Main Loop
+// Agent Definition
 // ─────────────────────────────────────────────────────────────
 
-async function main(): Promise<void> {
-  assertPrerequisites();
+runLoop({
+  name: "refactor",
+  taskFile: ".ralph/REFACTOR.md",
+  timeout: "5m",
+  pushEvery: 4,
 
-  if (!existsSync(REFACTOR_FILE)) {
-    console.log(`ℹ️  ${REFACTOR_FILE} not found; exiting.`);
-    process.exit(0);
-  }
+  decide(state: LoopState) {
+    const { hasTodos, hasUncommittedChanges, context } = state;
 
-  printBanner("REFACTOR — Autonomous Worker Loop");
-
-  let iteration = 0;
-
-  while (true) {
-    iteration++;
-    printIteration(iteration);
-
-    const hasTasks = hasUncheckedTodos(REFACTOR_FILE);
-    const hasChanges = await hasUncommittedChanges();
-
-    // Build prompt
-    let prompt: string;
-    if (hasChanges) {
-      console.log("🕵️  Uncommitted changes detected. Resuming prior work...");
-      const base = hasTasks
-        ? PROMPT_REFACTOR
-        : providedContext
-          ? promptFindRefactorWorkWithContext(providedContext)
-          : PROMPT_FIND_REFACTOR_WORK;
-      prompt = `${base}\n\n${PROMPT_RESUME}`;
-    } else if (hasTasks) {
-      prompt = PROMPT_REFACTOR;
-    } else if (providedContext) {
-      prompt = promptFindRefactorWorkWithContext(providedContext);
-    } else {
-      prompt = PROMPT_FIND_REFACTOR_WORK;
+    // Has work to do
+    if (hasTodos) {
+      return {
+        type: "work",
+        prompt: withResume(PROMPT_REFACTOR, hasUncommittedChanges),
+      };
     }
 
-    if (DRY_RUN) dryRun(prompt);
+    // No todos — generate new tasks, then exit for review
+    const generatePrompt = context
+      ? promptFindWorkWithContext(context)
+      : PROMPT_FIND_WORK;
 
-    await runAgent(prompt, TIMEOUT_MS);
-    await ensureCommit("refactor: finalize");
-
-    // Specialized agent behavior:
-    // - If we seeded tasks this iteration, exit so the user can review/edit the list.
-    // - If we finished the final task, exit.
-    if (!hasTasks) {
-      console.log("\n✅ Refactor tasks written; exiting (review .ralph/REFACTOR.md). ");
-      process.exit(0);
-    }
-
-    if (!hasUncheckedTodos(REFACTOR_FILE)) {
-      console.log("\n✅ No unchecked refactor tasks remain; exiting.");
-      process.exit(0);
-    }
-
-    if (ONCE) process.exit(0);
-  }
-}
-
-if (import.meta.main) {
-  await main();
-}
+    return {
+      type: "generate",
+      prompt: withResume(generatePrompt, hasUncommittedChanges),
+    };
+  },
+});

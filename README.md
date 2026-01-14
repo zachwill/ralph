@@ -1,64 +1,138 @@
 # Ralph
 
-Autonomous coding loops that leverage the `pi` tool to perform iterative development tasks.
+Autonomous coding loops powered by `pi` (the Pi Coding Agent).
 
-## Overview
+## Quick Start
 
-Ralph and its siblings are wrapper scripts around `pi` (the Pi Coding Agent) that automate the "read-code-write-commit" loop. They are designed to work against a `TODO.md` file, picking tasks, executing them, and committing changes automatically.
+```bash
+# Run the general worker
+bun agents/ralph.ts
+
+# Single iteration
+bun agents/ralph.ts --once
+
+# Preview prompt without running
+bun agents/ralph.ts --dry-run
+
+# Guide task generation
+bun agents/ralph.ts -c "Add error handling to the API layer"
+```
 
 ## The Agents
 
-- **agents/ralph.ts**: The general-purpose worker. It looks for tasks in `.ralph/TODO.md` and keeps working until the list is empty.
-- **agents/refactor.ts**: A specialized refactor agent. It executes tasks from `.ralph/REFACTOR.md`. If the file has no actionable items, it can generate a fresh task list (optionally guided by `--context`) and then exits so you can review.
-- **agents/cleanup.ts**: A specialized cleanup agent. It executes tasks from `.ralph/CLEANUP.md`. If the file has no actionable items, it can generate a fresh task list from `--context` and then exits so you can review.
+| Agent | Task File | Behavior |
+|-------|-----------|----------|
+| `ralph.ts` | `.ralph/TODO.md` | General worker. Finds work when empty. |
+| `refactor.ts` | `.ralph/REFACTOR.md` | Refactors one file at a time. Exits after generating tasks for review. |
+| `cleanup.ts` | `.ralph/CLEANUP.md` | Goal-directed cleanup. Requires `--context` to generate tasks. |
 
-## How it Works
+## How It Works
 
-Each agent follows a similar execution pattern:
+1. **Check state** — Resume if uncommitted changes exist
+2. **Pick task** — Read next unchecked item from task file
+3. **Run pi** — Execute with timeout protection
+4. **Commit** — Auto-commit if agent forgets
+5. **Push** — Every N commits (default: 4)
+6. **Loop** — Until tasks complete or max iterations reached
 
-1. **Check for existing work**: If there are uncommitted changes, it resumes the previous task.
-2. **Task Selection**: It reads the next unchecked item from its designated task file (supports `- [ ]`, `* [ ]`, and `+ [ ]`).
-3. **Agent Execution**: It spawns `pi` with a specific prompt and task description.
-4. **Git Integration**: After `pi` finishes, the agent verifies if a commit was made. If changes exist but weren't committed, it auto-commits them.
-5. **Iteration**: It loops back to step 1 until no tasks remain or it's manually stopped.
+## Building Your Own Agent
 
-### Dry Run
+All agents use `runLoop()` from `core.ts`:
 
-All agents support `--dry-run`, which prints the exact prompt that would be sent to `pi` and exits without running `pi`, committing, or pushing.
+```typescript
+#!/usr/bin/env bun
+import { runLoop, runPi, withResume, type LoopState } from "./core";
 
-## Usage
+const PROMPT_WORK = `
+- Look at .ralph/TODO.md for the current task list
+- Pick a task and do it
+- Check off the item and commit
+- Exit
+`.trim();
 
-```bash
-# Start the general worker
-bun agents/ralph.ts
+runLoop({
+  name: "my-agent",
+  taskFile: ".ralph/TODO.md",
+  timeout: "5m",              // "30s", "5m", "1h", or number (seconds)
+  pushEvery: 4,               // Push every N commits
+  maxIterations: 400,         // Safety limit
+  supervisorEvery: 12,        // Optional: run supervisor every N commits
 
-# Run a single iteration
-bun agents/ralph.ts --once
+  decide(state: LoopState) {
+    if (state.hasTodos) {
+      return { type: "work", prompt: withResume(PROMPT_WORK, state.hasUncommittedChanges) };
+    }
+    return { type: "halt", reason: "No tasks remain" };
+  },
 
-# Preview what would be sent to pi (no side effects)
-bun agents/ralph.ts --dry-run
-
-# Guide TODO generation when TODO.md is empty
-bun agents/ralph.ts --context "Tighten up the auth flow; focus on tests and types"
-
-# Run the refactor loop
-bun agents/refactor.ts
-
-# Refactor: seed tasks when REFACTOR.md is empty
-bun agents/refactor.ts --context "Refactor the API layer; smaller modules, clearer naming"
-
-# Preview what refactor would be sent to pi
-bun agents/refactor.ts --dry-run
-
-# Run the cleanup loop
-bun agents/cleanup.ts
-
-# Cleanup: use inline context to generate tasks
-bun agents/cleanup.ts --context "Remove legacy router paths; new URLs only"
+  // Optional: supervisor runs every N commits (can do anything)
+  async supervisor(state) {
+    await runPi("Review recent work...", { 
+      timeout: "3m",
+      args: ["--model", "o3"] 
+    });
+  },
+});
 ```
+
+### Actions
+
+Your `decide()` function returns one of:
+
+```typescript
+{ type: "work", prompt: "..." }      // Do work, continue loop
+{ type: "generate", prompt: "..." }  // Generate tasks, exit for review
+{ type: "halt", reason: "..." }      // Stop entirely
+```
+
+### State
+
+```typescript
+interface LoopState {
+  iteration: number;
+  commitsSinceStart: number;
+  hasUncommittedChanges: boolean;
+  hasTodos: boolean;
+  nextTodo: string | null;
+  taskFileContent: string;
+  context: string | null;       // from --context/-c
+  isFirstIteration: boolean;
+}
+```
+
+## CLI Flags
+
+All agents support:
+
+| Flag | Description |
+|------|-------------|
+| `--once` | Run single iteration then exit |
+| `--dry-run` | Print prompt without running |
+| `-c, --context` | Context for task generation |
 
 ## Requirements
 
-- `pi` CLI tool installed in PATH.
-- A git repository.
-- `bun` runtime.
+- `pi` in PATH
+- Git repository
+- Bun runtime
+
+## Examples
+
+```bash
+# General work
+bun agents/ralph.ts
+bun agents/ralph.ts -c "Focus on test coverage"
+
+# Refactoring
+bun agents/refactor.ts
+bun agents/refactor.ts -c "Clean up the data layer"
+
+# Cleanup with specific goal
+bun agents/cleanup.ts -c "Remove all TODO comments"
+bun agents/cleanup.ts -c "Standardize error handling"
+
+# Supervised agent (every 12 commits)
+bun agents/examples/ralph-with-supervisor.ts
+```
+
+See `AGENTS.md` for detailed architecture docs.

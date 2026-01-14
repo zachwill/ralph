@@ -1,12 +1,18 @@
 #!/usr/bin/env bun
 /**
- * ralph.ts — General purpose worker agent
+ * Example: ralph with a supervisor that runs every 12 commits.
  *
- * When there are todos: work through them
- * When empty: find new work (optionally guided by --context)
+ * The supervisor can run anything — a different prompt, a different model,
+ * or even a completely different script.
  */
 
-import { runLoop, withResume, CONTINUE, HALT, type LoopState } from "./core";
+import {
+  runLoop,
+  runPi,
+  runCommand,
+  withResume,
+  type LoopState,
+} from "../core";
 
 // ─────────────────────────────────────────────────────────────
 // Prompts
@@ -42,19 +48,41 @@ TASK:
 `.trim();
 
 // ─────────────────────────────────────────────────────────────
+// Supervisor Prompt (runs with a different model)
+// ─────────────────────────────────────────────────────────────
+
+const SUPERVISOR_PROMPT = `
+You are a supervisor reviewing recent work. Run:
+
+  git log -n 12 --oneline
+
+Review the recent commits and the current state of the codebase.
+
+Your job:
+1. Check if work is going in a productive direction
+2. Look for any issues, bugs, or regressions
+3. Update .ralph/TODO.md if priorities should change
+4. If everything looks good, just note it and exit
+
+If you make changes:
+- git add -A && git commit -m "supervisor: <what you adjusted>"
+- Exit
+`.trim();
+
+// ─────────────────────────────────────────────────────────────
 // Agent Definition
 // ─────────────────────────────────────────────────────────────
 
 runLoop({
-  name: "ralph",
+  name: "ralph-supervised",
   taskFile: ".ralph/TODO.md",
   timeout: "5m",
   pushEvery: 4,
+  supervisorEvery: 12,
 
   decide(state: LoopState) {
     const { hasTodos, hasUncommittedChanges, context } = state;
 
-    // Has work to do
     if (hasTodos) {
       return {
         type: "work",
@@ -62,7 +90,6 @@ runLoop({
       };
     }
 
-    // No todos — generate new tasks
     const generatePrompt = context
       ? promptFindWorkWithContext(context)
       : PROMPT_FIND_WORK;
@@ -71,5 +98,22 @@ runLoop({
       type: "generate",
       prompt: withResume(generatePrompt, hasUncommittedChanges),
     };
+  },
+
+  // Supervisor runs every 12 commits
+  async supervisor(state: LoopState) {
+    console.log(`📊 Supervisor check after ${state.commitsSinceStart} commits`);
+
+    // Example 1: Run pi with a different model
+    await runPi(SUPERVISOR_PROMPT, {
+      timeout: "3m",
+      args: ["--model", "claude-sonnet-4-20250514"],
+    });
+
+    // Example 2: Or run a completely different script
+    // await runCommand(["bun", "agents/supervisor-script.ts"], { timeout: "2m" });
+
+    // Example 3: Or run any shell command
+    // await runCommand(["./scripts/check-quality.sh"]);
   },
 });
