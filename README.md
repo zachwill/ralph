@@ -9,7 +9,7 @@ Ralph and its siblings are wrapper scripts around `pi` (the Pi Coding Agent) tha
 ## The Agents
 
 - **agents/ralph.ts**: The general-purpose worker. It looks for tasks in `.ralph/TODO.md` and keeps working until the list is empty.
-- **agents/refactor.ts**: A specialized agent for large-scale refactors. It reads tasks from `.ralph/REFACTOR.md` and focuses on component extraction and JSX cleanup.
+- **agents/refactor.ts**: A specialized agent for large-scale refactors. It reads tasks from `.ralph/REFACTOR.md` and focuses on cleanup.
 - **agents/cleanup.ts**: A task-oriented cleaner. It reads a high-level goal from `.ralph/CLEANUP_CONTEXT.md`, identifies specific tasks to populate `.ralph/CLEANUP.md`, and then executes them sequentially.
 
 ## How it Works
