@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
 import { existsSync, readFileSync } from "fs";
-import { 
-  PI_PATH, 
-  timestamp, 
-  hasUncommittedChanges, 
-  recentCommit, 
-  runAgent 
+import {
+  PI_PATH,
+  timestamp,
+  hasUncommittedChanges,
+  recentCommit,
+  runAgent,
 } from "./internal";
 
 /**
@@ -85,7 +85,7 @@ Finish/repair the in-progress work and commit.
 // Helpers
 // ─────────────────────────────────────────────────────────────
 
-const readTodo = () => existsSync(TODO_FILE) ? readFileSync(TODO_FILE, "utf-8") : "";
+const readTodo = () => (existsSync(TODO_FILE) ? readFileSync(TODO_FILE, "utf-8") : "");
 
 const ensureDir = async (path: string) => {
   const { $ } = await import("bun");
@@ -98,79 +98,109 @@ const writeContextFile = async (context: string) => {
 };
 
 const getNextTodo = (content: string) => {
-  const match = content.match(/^\s*-\s*\[ \]\s+(.*)$/m);
+  const match = content.match(/^\s*(?:-|\*|\+)\s*\[ \]\s+(.*)$/m);
   return match ? match[1].trim() : null;
 };
 
-// ─────────────────────────────────────────────────────────────
-// Main Loop
-// ─────────────────────────────────────────────────────────────
+async function main(): Promise<void> {
+  // Main Loop
+  if (!PI_PATH) {
+    console.error("❌ Could not find 'pi' in PATH");
+    process.exit(1);
+  }
 
-if (!PI_PATH) {
-  console.error("❌ Could not find 'pi' in PATH");
-  process.exit(1);
+  if (!existsSync(".git")) {
+    console.error("❌ Not a git repository");
+    process.exit(1);
+  }
+
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  console.log("ROUTER CLEANUP — Autonomous Refactor Loop");
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
+  const { $ } = await import("bun");
+  let iteration = 0;
+
+  while (true) {
+    iteration++;
+    console.log(`\n┌─ Iteration #${iteration} — ${timestamp()}`);
+    console.log("└──────────────────────────────────────\n");
+
+    const todoContent = readTodo();
+    const nextTask = getNextTodo(todoContent);
+
+    if (!nextTask && !(await hasUncommittedChanges())) {
+      if (providedContext) {
+        if (shouldWriteContext) {
+          console.log(`📝 Writing ${CONTEXT_FILE} from --context...`);
+          await writeContextFile(providedContext);
+          console.log("🔍 Generating tasks based on provided context...");
+          if (DRY_RUN) {
+            console.log("\n(dry-run) Would run prompt:\n");
+            console.log(PROMPT_FIND_WORK);
+            break;
+          }
+          await runAgent(PROMPT_FIND_WORK, TIMEOUT_MS);
+        } else {
+          console.log(
+            "🔍 Generating tasks based on provided context (not writing to disk)...",
+          );
+          if (DRY_RUN) {
+            console.log("\n(dry-run) Would run prompt:\n");
+            console.log(PROMPT_FIND_WORK_WITH_INLINE_CONTEXT(providedContext));
+            break;
+          }
+          await runAgent(PROMPT_FIND_WORK_WITH_INLINE_CONTEXT(providedContext), TIMEOUT_MS);
+        }
+        continue;
+      }
+
+      if (existsSync(CONTEXT_FILE)) {
+        console.log("🔍 Generating tasks based on context...");
+        if (DRY_RUN) {
+          console.log("\n(dry-run) Would run prompt:\n");
+          console.log(PROMPT_FIND_WORK);
+          break;
+        }
+        await runAgent(PROMPT_FIND_WORK, TIMEOUT_MS);
+        continue;
+      }
+
+      console.log("✅ No unchecked tasks remain and no context provided; exiting.");
+      break;
+    }
+
+    const prompt = (await hasUncommittedChanges())
+      ? `${SYSTEM_RULES}\n\n${PROMPT_RESUME}\n\n${TASK_CONSTRAINTS}`
+      : `${SYSTEM_RULES}\n\nYour task: ${nextTask}\n\n${TASK_CONSTRAINTS}`;
+
+    if (DRY_RUN) {
+      console.log("\n(dry-run) Would run prompt:\n");
+      console.log(prompt);
+      break;
+    }
+
+    if (await hasUncommittedChanges()) {
+      console.log("🕵️  Uncommitted changes detected. Resuming...");
+    } else {
+      console.log(`▶ Task: ${nextTask}`);
+    }
+
+    await runAgent(prompt, TIMEOUT_MS);
+
+    // Verification
+    if (await recentCommit()) {
+      console.log("✅ Agent committed successfully.");
+    } else if (await hasUncommittedChanges()) {
+      console.log("⚠️ Uncommitted changes remain. Auto-committing...");
+      await $`git add -A`.quiet();
+      await $`git commit -m ${"cleanup: finalize iteration " + iteration}`.quiet();
+    }
+
+    if (ONCE) break;
+  }
 }
 
-console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-console.log("ROUTER CLEANUP — Autonomous Refactor Loop");
-console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-
-const { $ } = await import("bun");
-let iteration = 0;
-
-while (true) {
-  iteration++;
-  console.log(`\n┌─ Iteration #${iteration} — ${timestamp()}`);
-  console.log("└──────────────────────────────────────\n");
-
-  const todoContent = readTodo();
-  const nextTask = getNextTodo(todoContent);
-
-  if (!nextTask && !(await hasUncommittedChanges())) {
-    if (providedContext) {
-      if (shouldWriteContext) {
-        console.log(`📝 Writing ${CONTEXT_FILE} from --context...`);
-        await writeContextFile(providedContext);
-        console.log("🔍 Generating tasks based on provided context...");
-        await runAgent(PROMPT_FIND_WORK, TIMEOUT_MS);
-      } else {
-        console.log("🔍 Generating tasks based on provided context (not writing to disk)...");
-        await runAgent(PROMPT_FIND_WORK_WITH_INLINE_CONTEXT(providedContext), TIMEOUT_MS);
-      }
-      continue;
-    }
-
-    if (existsSync(CONTEXT_FILE)) {
-      console.log("🔍 Generating tasks based on context...");
-      await runAgent(PROMPT_FIND_WORK, TIMEOUT_MS);
-      continue;
-    }
-
-    console.log("✅ No unchecked tasks remain and no context provided; exiting.");
-    break;
-  }
-
-  if (await hasUncommittedChanges()) {
-    console.log("🕵️  Uncommitted changes detected. Resuming...");
-    await runAgent(`${SYSTEM_RULES}\n\n${PROMPT_RESUME}\n\n${TASK_CONSTRAINTS}`, TIMEOUT_MS);
-  } else {
-    console.log(`▶ Task: ${nextTask}`);
-    await runAgent(`${SYSTEM_RULES}\n\nYour task: ${nextTask}\n\n${TASK_CONSTRAINTS}`, TIMEOUT_MS);
-  }
-
-  if (DRY_RUN) {
-    console.log("(dry-run) Stopping after one iteration.");
-    break;
-  }
-
-  // Verification
-  if (await recentCommit()) {
-    console.log("✅ Agent committed successfully.");
-  } else if (await hasUncommittedChanges()) {
-    console.log("⚠️ Uncommitted changes remain. Auto-committing...");
-    await $`git add -A`.quiet();
-    await $`git commit -m ${"cleanup: finalize iteration " + iteration}`.quiet();
-  }
-
-  if (ONCE) break;
+if (import.meta.main) {
+  await main();
 }

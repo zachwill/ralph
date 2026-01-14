@@ -1,13 +1,13 @@
 #!/usr/bin/env bun
 import { existsSync, readFileSync } from "fs";
-import { 
-  PI_PATH, 
-  timestamp, 
-  hasUncommittedChanges, 
-  recentCommit, 
-  getCommitCount, 
-  runAgent, 
-  push 
+import {
+  PI_PATH,
+  timestamp,
+  hasUncommittedChanges,
+  recentCommit,
+  getCommitCount,
+  runAgent,
+  push,
 } from "./internal";
 
 // ─────────────────────────────────────────────────────────────
@@ -19,6 +19,16 @@ const DRY_RUN = Bun.argv.includes("--dry-run");
 const TIMEOUT_MS = parseInt(Bun.env.WORKER_TIMEOUT || "3000") * 100;
 const PUSH_EVERY = 4;
 const TODO_FILE = ".ralph/TODO.md";
+
+const getArgValue = (flag: string) => {
+  const idx = Bun.argv.indexOf(flag);
+  if (idx === -1) return null;
+  const next = Bun.argv[idx + 1];
+  if (!next || next.startsWith("--")) return null;
+  return next;
+};
+
+const providedContext = getArgValue("--context") || getArgValue("-c");
 
 // ─────────────────────────────────────────────────────────────
 // Prompts
@@ -39,6 +49,17 @@ const PROMPT_FIND_WORK = `
 - Exit after committing. Don't do any coding yet.
 `.trim();
 
+const PROMPT_FIND_WORK_WITH_INLINE_CONTEXT = (context: string) => `
+- .ralph/TODO.md has no actionable items. Wipe it clean and start fresh.
+- Use the following goal as context for what tasks to add (treat it like instructions from the user):
+
+${context}
+
+- Look through the codebase and add useful work items to .ralph/TODO.md.
+- Commit: git add -A && git commit -m "<what you added>"
+- Exit after committing. Don't do any coding yet.
+`.trim();
+
 const PROMPT_RESUME = `
 NOTE: There are uncommitted changes from a previous execution.
 Run "git diff" and "git log --oneline -5" to see the state of the work, complete any unfinished logic, and commit.
@@ -49,7 +70,7 @@ Run "git diff" and "git log --oneline -5" to see the state of the work, complete
 // ─────────────────────────────────────────────────────────────
 
 const hasTodos = () =>
-  existsSync(TODO_FILE) && /\[ \]/.test(readFileSync(TODO_FILE, "utf-8"));
+  existsSync(TODO_FILE) && /^(?:\s*[-*+])\s*\[ \]/m.test(readFileSync(TODO_FILE, "utf-8"));
 
 // ─────────────────────────────────────────────────────────────
 // Git Operations
@@ -77,69 +98,76 @@ async function syncWithRemote(): Promise<boolean> {
 // Agent Runner
 // ─────────────────────────────────────────────────────────────
 
-async function handleResume(): Promise<boolean> {
-  if (!(await hasUncommittedChanges())) return false;
+async function getResumePrompt(): Promise<string | null> {
+  if (!(await hasUncommittedChanges())) return null;
 
   console.log("🕵️  Uncommitted changes detected. Resuming prior work...");
   const base = hasTodos() ? PROMPT_WITH_TODOS : PROMPT_FIND_WORK;
-  await runAgent(`${base}\n\n${PROMPT_RESUME}`, TIMEOUT_MS);
-  return true;
+  return `${base}\n\n${PROMPT_RESUME}`;
 }
 
-// ─────────────────────────────────────────────────────────────
-// Main Loop
-// ─────────────────────────────────────────────────────────────
+async function main(): Promise<void> {
+  // Main Loop
+  if (!PI_PATH) {
+    console.error("❌ Could not find 'pi' in PATH");
+    Bun.exit(1);
+  }
 
-if (!PI_PATH) {
-  console.error("❌ Could not find 'pi' in PATH");
-  Bun.exit(1);
+  if (!existsSync(".git")) {
+    console.error("❌ Not a git repository");
+    Bun.exit(1);
+  }
+
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  console.log("RALPH — Autonomous Worker Loop");
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
+  const { $ } = await import("bun");
+  let iteration = 0;
+  let lastPushAt = await getCommitCount();
+
+  while (true) {
+    iteration++;
+    console.log(`\n┌─ Iteration #${iteration} — ${timestamp()}`);
+    console.log("└──────────────────────────────────────\n");
+
+    const resumePrompt = iteration === 1 ? await getResumePrompt() : null;
+
+    const base = hasTodos() ? PROMPT_WITH_TODOS : PROMPT_FIND_WORK;
+    const nextPrompt = !hasTodos() && providedContext
+      ? PROMPT_FIND_WORK_WITH_INLINE_CONTEXT(providedContext)
+      : base;
+
+    const prompt = resumePrompt ?? nextPrompt;
+
+    if (DRY_RUN) {
+      console.log("\n(dry-run) Would run prompt:\n");
+      console.log(prompt);
+      Bun.exit(0);
+    }
+
+    await runAgent(prompt, TIMEOUT_MS);
+
+    // Check what happened
+    if (await recentCommit()) {
+      console.log("\n✅ Agent committed successfully");
+    } else if (await hasUncommittedChanges()) {
+      console.log("\n📦 Uncommitted changes — auto-committing...");
+      await $`git add -A`.quiet();
+      await $`git commit -m ${"chore: finalize iteration " + iteration}`.quiet();
+    }
+
+    // Push periodically
+    const currentCount = await getCommitCount();
+    if (currentCount - lastPushAt >= PUSH_EVERY) {
+      await push();
+      lastPushAt = currentCount;
+    }
+
+    if (ONCE) Bun.exit(0);
+  }
 }
 
-if (!existsSync(".git")) {
-  console.error("❌ Not a git repository");
-  Bun.exit(1);
-}
-
-console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-console.log("RALPH — Autonomous Worker Loop");
-console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-
-const { $ } = await import("bun");
-let iteration = 0;
-let lastPushAt = await getCommitCount();
-
-while (true) {
-  iteration++;
-  console.log(`\n┌─ Iteration #${iteration} — ${timestamp()}`);
-  console.log("└──────────────────────────────────────\n");
-
-  // Check for leftover work from previous run
-  if (iteration === 1 && (await handleResume())) {
-    // Resume handled it
-  } else {
-    await runAgent(hasTodos() ? PROMPT_WITH_TODOS : PROMPT_FIND_WORK, TIMEOUT_MS);
-  }
-
-  if (DRY_RUN) {
-    console.log("\n(dry-run) Stopping after one iteration.");
-    Bun.exit(0);
-  }
-
-  // Check what happened
-  if (await recentCommit()) {
-    console.log("\n✅ Agent committed successfully");
-  } else if (await hasUncommittedChanges()) {
-    console.log("\n📦 Uncommitted changes — auto-committing...");
-    await $`git add -A`.quiet();
-    await $`git commit -m ${"chore: finalize iteration " + iteration}`.quiet();
-  }
-
-  // Push periodically
-  const currentCount = await getCommitCount();
-  if (currentCount - lastPushAt >= PUSH_EVERY) {
-    await push();
-    lastPushAt = currentCount;
-  }
-
-  if (ONCE) Bun.exit(0);
+if (import.meta.main) {
+  await main();
 }

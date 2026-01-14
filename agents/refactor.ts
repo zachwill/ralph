@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
 import { existsSync, readFileSync } from "fs";
-import { 
-  PI_PATH, 
-  timestamp, 
-  hasUncommittedChanges, 
-  recentCommit, 
-  runAgent 
+import {
+  PI_PATH,
+  timestamp,
+  hasUncommittedChanges,
+  recentCommit,
+  runAgent,
 } from "./internal";
 
 const ONCE = Bun.argv.includes("--once");
@@ -38,70 +38,76 @@ Complete any unfinished logic and commit. If it looks complete, just commit what
 function hasRefactorTodos(): boolean {
   if (!existsSync(REFACTOR_FILE)) return false;
   const contents = readFileSync(REFACTOR_FILE, "utf-8");
-  return /- \[ \] `[^`]+`/.test(contents);
+  return /^(?:\s*[-*+])\s*\[ \]\s*`[^`]+`/m.test(contents);
 }
 
-async function handleResume(): Promise<boolean> {
-  if (!(await hasUncommittedChanges())) return false;
-
+async function getResumePrompt(): Promise<string | null> {
+  if (!(await hasUncommittedChanges())) return null;
   console.log("🕵️  Uncommitted changes detected. Resuming prior work...");
-  await runAgent(`${PROMPT_WITH_REFACTOR}\n\n${PROMPT_RESUME}`, TIMEOUT_MS);
-  return true;
+  return `${PROMPT_WITH_REFACTOR}\n\n${PROMPT_RESUME}`;
 }
 
-if (!PI_PATH) {
-  console.error("❌ Could not find 'pi' in PATH");
-  process.exit(1);
-}
-
-if (!existsSync(".git")) {
-  console.error("❌ Not a git repository");
-  process.exit(1);
-}
-
-if (!existsSync(REFACTOR_FILE)) {
-  console.log(`ℹ️  ${REFACTOR_FILE} not found; exiting.`);
-  process.exit(0);
-}
-
-if (!hasRefactorTodos()) {
-  console.log("✅ No unchecked refactor tasks found in REFACTOR.md; exiting.");
-  process.exit(0);
-}
-
-console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-console.log("REFACTOR — Autonomous Worker Loop");
-console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-
-const { $ } = await import("bun");
-let iteration = 0;
-
-while (true) {
-  iteration++;
-  console.log(`\n┌─ Iteration #${iteration} — ${timestamp()}`);
-  console.log("└──────────────────────────────────────\n");
-
-  if (!(await handleResume())) {
-    await runAgent(PROMPT_WITH_REFACTOR, TIMEOUT_MS);
+async function main(): Promise<void> {
+  if (!PI_PATH) {
+    console.error("❌ Could not find 'pi' in PATH");
+    process.exit(1);
   }
 
-  if (DRY_RUN) {
-    console.log("\n(dry-run) Stopping after one iteration.");
+  if (!existsSync(".git")) {
+    console.error("❌ Not a git repository");
+    process.exit(1);
+  }
+
+  if (!existsSync(REFACTOR_FILE)) {
+    console.log(`ℹ️  ${REFACTOR_FILE} not found; exiting.`);
     process.exit(0);
-  }
-
-  if (await recentCommit()) {
-    console.log("\n✅ Agent committed successfully");
-  } else if (await hasUncommittedChanges()) {
-    console.log("\n📦 Uncommitted changes — auto-committing...");
-    await $`git add -A`.quiet();
-    await $`git commit -m ${"refactor: finalize"}`.quiet();
   }
 
   if (!hasRefactorTodos()) {
-    console.log("\n✅ No unchecked refactor tasks remain; exiting.");
+    console.log("✅ No unchecked refactor tasks found in REFACTOR.md; exiting.");
     process.exit(0);
   }
 
-  if (ONCE) process.exit(0);
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  console.log("REFACTOR — Autonomous Worker Loop");
+  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
+  const { $ } = await import("bun");
+  let iteration = 0;
+
+  while (true) {
+    iteration++;
+    console.log(`\n┌─ Iteration #${iteration} — ${timestamp()}`);
+    console.log("└──────────────────────────────────────\n");
+
+    const resumePrompt = await getResumePrompt();
+    const prompt = resumePrompt ?? PROMPT_WITH_REFACTOR;
+
+    if (DRY_RUN) {
+      console.log("\n(dry-run) Would run prompt:\n");
+      console.log(prompt);
+      process.exit(0);
+    }
+
+    await runAgent(prompt, TIMEOUT_MS);
+
+    if (await recentCommit()) {
+      console.log("\n✅ Agent committed successfully");
+    } else if (await hasUncommittedChanges()) {
+      console.log("\n📦 Uncommitted changes — auto-committing...");
+      await $`git add -A`.quiet();
+      await $`git commit -m ${"refactor: finalize"}`.quiet();
+    }
+
+    if (!hasRefactorTodos()) {
+      console.log("\n✅ No unchecked refactor tasks remain; exiting.");
+      process.exit(0);
+    }
+
+    if (ONCE) process.exit(0);
+  }
+}
+
+if (import.meta.main) {
+  await main();
 }
