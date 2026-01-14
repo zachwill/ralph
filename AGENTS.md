@@ -175,7 +175,7 @@ import {
   withResume,       // Append resume instructions if uncommitted changes
   RESUME_SUFFIX,    // Raw resume text
   withTaskFile,     // Build prompt with task file context
-  CONTINUE,         // Exit code 0
-  HALT,             // Exit code 1
+  type LoopState,   // State type for decide()
+  type PiOptions,   // Options for runPi()
 } from "./core";
 ```

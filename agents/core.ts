@@ -19,11 +19,6 @@ import { dirname } from "path";
 // Types
 // ─────────────────────────────────────────────────────────────
 
-/** Agent returns CONTINUE (0) to keep looping, HALT (1) to stop entirely */
-export const CONTINUE = 0;
-export const HALT = 1;
-export type ExitCode = typeof CONTINUE | typeof HALT;
-
 /** Options for pi execution */
 export interface PiOptions {
   timeout?: number | string;
