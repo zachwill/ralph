@@ -1,0 +1,14 @@
+# Bun
+bun.lockb
+node_modules/
+
+# OS
+.DS_Store
+
+# Environments
+.env*
+!.env.example
+
+# Build/Dist
+dist/
+.build/
