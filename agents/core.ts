@@ -477,7 +477,7 @@ export async function loop(config: LoopConfig): Promise<never> {
         await runPi(prompt, { model: action._options?.model, timeout: timeoutMs });
         await ensureCommit("chore: generate tasks");
         console.log(`\n✅ Tasks written to ${config.taskFile}`);
-        process.exit(0);
+        break;
       }
 
       case "work": {
