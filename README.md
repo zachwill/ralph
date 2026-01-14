@@ -66,13 +66,36 @@ state.iteration       // current loop iteration
 state.commits         // commits this session
 ```
 
-## Different Model for Planning
+## RunOptions
+
+Pass options to `work()`, `generate()`, or `supervisor()`:
 
 ```typescript
+interface RunOptions {
+  model?: string;      // Single model (e.g., "gpt-4o-mini")
+  provider?: string;   // Provider (e.g., "openai", "anthropic")
+  models?: string;     // Limit model cycling (e.g., "sonnet:high,haiku:low")
+  thinking?: "low" | "medium" | "high";  // Starting thinking level
+  tools?: string;      // Restrict tools (e.g., "read,grep,find,ls")
+  timeout?: number | string;  // Per-run timeout
+}
+```
+
+Examples:
+
+```typescript
+// Different model for planning
 return generate(`...`, { 
   model: "claude-opus-4-5",
+  thinking: "high",
   timeout: "10m" 
 });
+
+// Limit model cycling
+return work(`...`, { models: "claude-sonnet,gpt-4o" });
+
+// Read-only mode
+return generate(`Review code...`, { tools: "read,grep,find,ls" });
 ```
 
 ## Supervisor
@@ -91,7 +114,8 @@ loop({
     every: 12,
     async run(state) {
       await runPi(`Review recent commits...`, { 
-        model: "claude-opus-4-5" 
+        model: "claude-opus-4-5",
+        thinking: "high"
       });
     },
   },
@@ -102,16 +126,25 @@ loop({
 });
 ```
 
-Or use the simple helper:
+Or use the simple helper (accepts all RunOptions):
 
 ```typescript
 import { loop, supervisor } from "./core";
 
 loop({
+  // Full options
   supervisor: supervisor(`Review work...`, { 
     every: 12, 
-    model: "claude-opus-4-5" 
+    model: "claude-opus-4-5",
+    thinking: "high"
   }),
+
+  // Or read-only supervisor
+  supervisor: supervisor(`Audit code...`, { 
+    every: 6, 
+    tools: "read,grep,find,ls"
+  }),
+
   // ...
 });
 ```

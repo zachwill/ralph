@@ -40,7 +40,36 @@ generate(prompt, options?)
 halt(reason)
 ```
 
-Options: `{ model?: string, timeout?: string | number }`
+### RunOptions
+
+All options are optional:
+
+```typescript
+interface RunOptions {
+  model?: string;      // Single model (e.g., "gpt-4o-mini")
+  provider?: string;   // Provider (e.g., "openai", "anthropic")
+  models?: string;     // Limit model cycling (e.g., "sonnet:high,haiku:low")
+  thinking?: "low" | "medium" | "high";  // Starting thinking level
+  tools?: string;      // Restrict tools (e.g., "read,grep,find,ls")
+  timeout?: number | string;  // Per-run timeout
+}
+```
+
+Examples:
+
+```typescript
+// Use a specific provider + model
+work(`...`, { provider: "openai", model: "gpt-4o" })
+
+// Limit model cycling with thinking levels
+work(`...`, { models: "sonnet:high,haiku:low" })
+
+// Read-only mode (no file modifications)
+generate(`Review the code...`, { tools: "read,grep,find,ls" })
+
+// High thinking for complex tasks
+work(`...`, { thinking: "high", timeout: "10m" })
+```
 
 ### State
 
@@ -65,24 +94,38 @@ Two ways to define a supervisor:
 supervisor: {
   every: 12,
   async run(state) {
-    await runPi(`...`, { model: "claude-opus-4-5" });
+    await runPi(`...`, { model: "claude-opus-4-5", thinking: "high" });
     // or
     await runCommand(["bun", "scripts/review.ts"]);
   },
 }
 
-// Simple (just a prompt)
+// Simple (just a prompt + RunOptions)
 supervisor: supervisor(`Review work...`, { 
   every: 12, 
-  model: "claude-opus-4-5" 
+  model: "claude-opus-4-5",
+  thinking: "high"
+})
+
+// Read-only supervisor (can't modify files)
+supervisor: supervisor(`Audit the codebase...`, { 
+  every: 6, 
+  tools: "read,grep,find,ls"
 })
 ```
 
 ### Helpers
 
 ```typescript
-// Run pi with options
-await runPi(prompt, { model?: string, timeout?: string })
+// Run pi with RunOptions
+await runPi(prompt, { 
+  model?: string,
+  provider?: string,
+  models?: string,
+  thinking?: "low" | "medium" | "high",
+  tools?: string,
+  timeout?: string 
+})
 
 // Run any command
 await runCommand(["bun", "script.ts"], { timeout?: string })

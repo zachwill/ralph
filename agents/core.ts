@@ -3,7 +3,7 @@
  * core.ts — Dead simple autonomous loops.
  *
  * Usage:
- *   import { loop, work, generate, halt } from "./core";
+ *   import { loop, work, generate, halt, supervisor } from "./core";
  *
  *   loop({
  *     name: "my-loop",
@@ -14,6 +14,14 @@
  *       return generate(`...`);
  *     },
  *   });
+ *
+ * RunOptions (for work, generate, supervisor):
+ *   - model: Single model (e.g., "gpt-4o-mini")
+ *   - provider: Provider (e.g., "openai", "anthropic")
+ *   - models: Limit cycling (e.g., "sonnet:high,haiku:low")
+ *   - thinking: Starting level ("low" | "medium" | "high")
+ *   - tools: Restrict tools (e.g., "read,grep,find,ls" for read-only)
+ *   - timeout: Per-run timeout (e.g., "5m")
  */
 
 import { $, spawn } from "bun";
@@ -25,7 +33,31 @@ import { dirname } from "path";
 // ─────────────────────────────────────────────────────────────
 
 export interface RunOptions {
+  /** Single model to use (e.g., "gpt-4o-mini") */
   model?: string;
+
+  /** Provider to use (e.g., "openai", "anthropic") */
+  provider?: string;
+
+  /**
+   * Limit model cycling to specific models.
+   * Examples:
+   *   - "claude-sonnet,claude-haiku,gpt-4o"
+   *   - "github-copilot/*"
+   *   - "sonnet:high,haiku:low" (with thinking levels)
+   */
+  models?: string;
+
+  /** Starting thinking level: "low", "medium", or "high" */
+  thinking?: "low" | "medium" | "high";
+
+  /**
+   * Restrict available tools (comma-separated).
+   * Example: "read,grep,find,ls" for read-only mode
+   */
+  tools?: string;
+
+  /** Timeout per run (seconds or string like "5m") */
   timeout?: number | string;
 }
 
@@ -116,12 +148,13 @@ export function halt(reason: string): Action {
 /** Create a supervisor config from just a prompt */
 export function supervisor(
   prompt: string,
-  options: { every: number; model?: string; timeout?: number | string }
+  options: { every: number } & RunOptions
 ): SupervisorConfig {
+  const { every, ...runOptions } = options;
   return {
-    every: options.every,
+    every,
     async run() {
-      await runPi(prompt, { model: options.model, timeout: options.timeout });
+      await runPi(prompt, runOptions);
     },
   };
 }
@@ -284,11 +317,29 @@ async function getPiPath(): Promise<string> {
 
 export async function runPi(
   prompt: string,
-  options?: { model?: string; timeout?: number | string }
+  options?: RunOptions
 ): Promise<void> {
   const piPath = await getPiPath();
   const timeoutMs = options?.timeout ? parseTimeout(options.timeout) : 300_000;
-  const args = options?.model ? ["--model", options.model] : [];
+
+  // Build args from options
+  const args: string[] = [];
+
+  if (options?.model) {
+    args.push("--model", options.model);
+  }
+  if (options?.provider) {
+    args.push("--provider", options.provider);
+  }
+  if (options?.models) {
+    args.push("--models", options.models);
+  }
+  if (options?.thinking) {
+    args.push("--thinking", options.thinking);
+  }
+  if (options?.tools) {
+    args.push("--tools", options.tools);
+  }
 
   const proc = spawn([piPath, "-p", prompt, ...args], {
     stdout: "inherit",
