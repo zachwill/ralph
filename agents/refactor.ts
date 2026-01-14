@@ -25,8 +25,6 @@ const REFACTOR_FILE = ".ralph/REFACTOR.md";
 
 const providedContext = getArgValue("--context", "-c");
 
-// Pattern: checkbox followed by backtick-wrapped path
-const REFACTOR_PATTERN = /`[^`]+`/;
 
 // ─────────────────────────────────────────────────────────────
 // Prompts
@@ -94,7 +92,7 @@ async function main(): Promise<void> {
     iteration++;
     printIteration(iteration);
 
-    const hasTasks = hasUncheckedTodos(REFACTOR_FILE, REFACTOR_PATTERN);
+    const hasTasks = hasUncheckedTodos(REFACTOR_FILE);
     const hasChanges = await hasUncommittedChanges();
 
     // Build prompt
@@ -128,7 +126,7 @@ async function main(): Promise<void> {
       process.exit(0);
     }
 
-    if (!hasUncheckedTodos(REFACTOR_FILE, REFACTOR_PATTERN)) {
+    if (!hasUncheckedTodos(REFACTOR_FILE)) {
       console.log("\n✅ No unchecked refactor tasks remain; exiting.");
       process.exit(0);
     }

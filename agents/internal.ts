@@ -105,15 +105,13 @@ export const readFile = (path: string) =>
  * Check if a markdown file has unchecked todos: `- [ ]`
  * Optionally require a pattern after the checkbox (e.g., backtick-wrapped paths).
  */
-export function hasUncheckedTodos(path: string, pattern?: RegExp): boolean {
+export function hasUncheckedTodos(path: string): boolean {
   if (!existsSync(path)) return false;
   const content = readFileSync(path, "utf-8");
   const basePattern = /^(?:\s*[-*+])\s*\[ \]/m;
-  if (!pattern) return basePattern.test(content);
-  // Combine: checkbox followed by pattern
-  const combined = new RegExp(`^(?:\\s*[-*+])\\s*\\[ \\]\\s*${pattern.source}`, "m");
-  return combined.test(content);
+  return basePattern.test(content);
 }
+
 
 /**
  * Extract the text of the first unchecked todo item.
