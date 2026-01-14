@@ -120,7 +120,14 @@ async function main(): Promise<void> {
     await runAgent(prompt, TIMEOUT_MS);
     await ensureCommit("refactor: finalize");
 
-    // Check if we're done
+    // Specialized agent behavior:
+    // - If we seeded tasks this iteration, exit so the user can review/edit the list.
+    // - If we finished the final task, exit.
+    if (!hasTasks) {
+      console.log("\n✅ Refactor tasks written; exiting (review .ralph/REFACTOR.md). ");
+      process.exit(0);
+    }
+
     if (!hasUncheckedTodos(REFACTOR_FILE, REFACTOR_PATTERN)) {
       console.log("\n✅ No unchecked refactor tasks remain; exiting.");
       process.exit(0);
