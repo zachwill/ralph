@@ -9,8 +9,8 @@ Ralph and its siblings are wrapper scripts around `pi` (the Pi Coding Agent) tha
 ## The Agents
 
 - **agents/ralph.ts**: The general-purpose worker. It looks for tasks in `.ralph/TODO.md` and keeps working until the list is empty.
-- **agents/refactor.ts**: A specialized agent for large-scale refactors. It reads tasks from `.ralph/REFACTOR.md` and focuses on cleanup.
-- **agents/cleanup.ts**: A task-oriented cleaner. It reads a high-level goal from `.ralph/CLEANUP_CONTEXT.md`, identifies specific tasks to populate `.ralph/CLEANUP.md`, and then executes them sequentially.
+- **agents/refactor.ts**: A specialized refactor agent. It executes tasks from `.ralph/REFACTOR.md`. If the file has no actionable items, it can generate a fresh task list (optionally guided by `--context`) and then exits so you can review.
+- **agents/cleanup.ts**: A specialized cleanup agent. It executes tasks from `.ralph/CLEANUP.md`. If the file has no actionable items, it can generate a fresh task list from `--context` and then exits so you can review.
 
 ## How it Works
 
@@ -44,6 +44,9 @@ bun agents/ralph.ts --context "Tighten up the auth flow; focus on tests and type
 # Run the refactor loop
 bun agents/refactor.ts
 
+# Refactor: seed tasks when REFACTOR.md is empty
+bun agents/refactor.ts --context "Refactor the API layer; smaller modules, clearer naming"
+
 # Preview what refactor would be sent to pi
 bun agents/refactor.ts --dry-run
 
@@ -51,7 +54,7 @@ bun agents/refactor.ts --dry-run
 bun agents/cleanup.ts
 
 # Cleanup: use inline context to generate tasks
-bun agents/cleanup.ts --context "Remove legacy router paths; new URLs only" --write-context
+bun agents/cleanup.ts --context "Remove legacy router paths; new URLs only"
 ```
 
 ## Requirements

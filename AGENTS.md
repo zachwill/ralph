@@ -11,14 +11,15 @@ The most flexible pattern. It can both perform tasks and *identify* them. If `.r
 - Supports `--dry-run` to print the exact would-run `pi` prompt with no side effects.
 
 ### 2. Specialized Refactorer (`agents/refactor.ts`)
-Focuses on a specific type of transformation. It uses a dedicated `.ralph/REFACTOR.md` to avoid interfering with general development tasks.
+Focused refactor loop driven by `.ralph/REFACTOR.md`. Unlike `ralph.ts`, it’s meant for steering: when the task list is empty, it can generate a new list (optionally guided by `--context/-c`) and then exits so you can review/edit.
 
+- Supports `--context/-c` to guide task generation (only used when REFACTOR.md is empty).
 - Supports `--dry-run` to print the exact would-run `pi` prompt with no side effects.
 
 ### 3. Goal-Directed Cleaner (`agents/cleanup.ts`)
-General-purpose cleanup. Instead of hardcoding rules, it reads `.ralph/CLEANUP_CONTEXT.md` to understand the goal (e.g., "Refactor all context providers to use useReducer"). If `.ralph/CLEANUP.md` is empty, it populates it with tasks derived from the context and the codebase.
+Focused cleanup loop driven by `.ralph/CLEANUP.md`. When the task list is empty, it requires `--context/-c` to generate a fresh set of cleanup tasks, then exits so you can review/edit.
 
-- Supports `--context/-c` and `--write-context` to provide (and optionally persist) cleanup goals.
+- Supports `--context/-c` to guide task generation (only used when CLEANUP.md is empty).
 - Supports `--dry-run` to print the exact would-run `pi` prompt with no side effects.
 
 ## Shared Infrastructure
