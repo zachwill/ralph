@@ -108,7 +108,9 @@ async function main(): Promise<void> {
         console.log("🔍 Generating tasks based on provided context...");
         if (DRY_RUN) dryRun(PROMPT_FIND_WORK);
         await runAgent(PROMPT_FIND_WORK, TIMEOUT_MS);
-        continue;
+        await ensureCommit("cleanup: identify tasks");
+        console.log("✅ Cleanup tasks written; exiting (review .ralph/CLEANUP.md). ");
+        break;
       }
 
       // Option 2: Context provided inline (don't persist)
@@ -117,7 +119,9 @@ async function main(): Promise<void> {
         const prompt = promptFindWorkWithContext(providedContext);
         if (DRY_RUN) dryRun(prompt);
         await runAgent(prompt, TIMEOUT_MS);
-        continue;
+        await ensureCommit("cleanup: identify tasks");
+        console.log("✅ Cleanup tasks written; exiting (review .ralph/CLEANUP.md). ");
+        break;
       }
 
       // Option 3: Context file exists on disk
@@ -125,7 +129,9 @@ async function main(): Promise<void> {
         console.log("🔍 Generating tasks based on context...");
         if (DRY_RUN) dryRun(PROMPT_FIND_WORK);
         await runAgent(PROMPT_FIND_WORK, TIMEOUT_MS);
-        continue;
+        await ensureCommit("cleanup: identify tasks");
+        console.log("✅ Cleanup tasks written; exiting (review .ralph/CLEANUP.md). ");
+        break;
       }
 
       // No context at all — nothing to do
