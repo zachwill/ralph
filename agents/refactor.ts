@@ -1,19 +1,35 @@
 #!/usr/bin/env bun
-import { existsSync, readFileSync } from "fs";
+import { existsSync } from "fs";
 import {
-  PI_PATH,
-  timestamp,
+  hasFlag,
+  printBanner,
+  printIteration,
   hasUncommittedChanges,
-  recentCommit,
+  ensureCommit,
+  hasUncheckedTodos,
+  assertPrerequisites,
   runAgent,
+  dryRun,
+  PROMPT_RESUME,
 } from "./internal";
 
-const ONCE = Bun.argv.includes("--once");
-const DRY_RUN = Bun.argv.includes("--dry-run");
+// ─────────────────────────────────────────────────────────────
+// Configuration
+// ─────────────────────────────────────────────────────────────
+
+const ONCE = hasFlag("--once");
+const DRY_RUN = hasFlag("--dry-run");
 const TIMEOUT_MS = parseInt(Bun.env.WORKER_TIMEOUT || "300") * 1000;
 const REFACTOR_FILE = ".ralph/REFACTOR.md";
 
-const PROMPT_WITH_REFACTOR = `
+// Pattern: checkbox followed by backtick-wrapped path
+const REFACTOR_PATTERN = /`[^`]+`/;
+
+// ─────────────────────────────────────────────────────────────
+// Prompts
+// ─────────────────────────────────────────────────────────────
+
+const PROMPT_REFACTOR = `
 Your task is to refactor ONE TSX file listed in .ralph/REFACTOR.md (the next unchecked item). You must complete all steps before committing:
 
 1. Read .ralph/REFACTOR.md and pick the first unchecked item in the TODO list
@@ -29,77 +45,49 @@ Only after ALL the above work is done:
 DO NOT commit until the refactor is complete and working.
 `.trim();
 
-const PROMPT_RESUME = `
-NOTE: There are uncommitted changes from a previous execution.
-Run "git diff" and "git status" to understand the state of work.
-Complete any unfinished logic and commit. If it looks complete, just commit what's there.
-`.trim();
-
-function hasRefactorTodos(): boolean {
-  if (!existsSync(REFACTOR_FILE)) return false;
-  const contents = readFileSync(REFACTOR_FILE, "utf-8");
-  return /^(?:\s*[-*+])\s*\[ \]\s*`[^`]+`/m.test(contents);
-}
-
-async function getResumePrompt(): Promise<string | null> {
-  if (!(await hasUncommittedChanges())) return null;
-  console.log("🕵️  Uncommitted changes detected. Resuming prior work...");
-  return `${PROMPT_WITH_REFACTOR}\n\n${PROMPT_RESUME}`;
-}
+// ─────────────────────────────────────────────────────────────
+// Main Loop
+// ─────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  if (!PI_PATH) {
-    console.error("❌ Could not find 'pi' in PATH");
-    process.exit(1);
-  }
-
-  if (!existsSync(".git")) {
-    console.error("❌ Not a git repository");
-    process.exit(1);
-  }
+  assertPrerequisites();
 
   if (!existsSync(REFACTOR_FILE)) {
     console.log(`ℹ️  ${REFACTOR_FILE} not found; exiting.`);
     process.exit(0);
   }
 
-  if (!hasRefactorTodos()) {
+  if (!hasUncheckedTodos(REFACTOR_FILE, REFACTOR_PATTERN)) {
     console.log("✅ No unchecked refactor tasks found in REFACTOR.md; exiting.");
     process.exit(0);
   }
 
-  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-  console.log("REFACTOR — Autonomous Worker Loop");
-  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  printBanner("REFACTOR — Autonomous Worker Loop");
 
-  const { $ } = await import("bun");
   let iteration = 0;
 
   while (true) {
     iteration++;
-    console.log(`\n┌─ Iteration #${iteration} — ${timestamp()}`);
-    console.log("└──────────────────────────────────────\n");
+    printIteration(iteration);
 
-    const resumePrompt = await getResumePrompt();
-    const prompt = resumePrompt ?? PROMPT_WITH_REFACTOR;
+    const hasChanges = await hasUncommittedChanges();
 
-    if (DRY_RUN) {
-      console.log("\n(dry-run) Would run prompt:\n");
-      console.log(prompt);
-      process.exit(0);
+    // Build prompt
+    let prompt: string;
+    if (hasChanges) {
+      console.log("🕵️  Uncommitted changes detected. Resuming prior work...");
+      prompt = `${PROMPT_REFACTOR}\n\n${PROMPT_RESUME}`;
+    } else {
+      prompt = PROMPT_REFACTOR;
     }
+
+    if (DRY_RUN) dryRun(prompt);
 
     await runAgent(prompt, TIMEOUT_MS);
+    await ensureCommit("refactor: finalize");
 
-    if (await recentCommit()) {
-      console.log("\n✅ Agent committed successfully");
-    } else if (await hasUncommittedChanges()) {
-      console.log("\n📦 Uncommitted changes — auto-committing...");
-      await $`git add -A`.quiet();
-      await $`git commit -m ${"refactor: finalize"}`.quiet();
-    }
-
-    if (!hasRefactorTodos()) {
+    // Check if we're done
+    if (!hasUncheckedTodos(REFACTOR_FILE, REFACTOR_PATTERN)) {
       console.log("\n✅ No unchecked refactor tasks remain; exiting.");
       process.exit(0);
     }
