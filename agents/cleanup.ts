@@ -20,7 +20,7 @@ import {
 // ─────────────────────────────────────────────────────────────
 
 const ONCE = Bun.argv.includes("--once");
-const DRY_RUN = Bun.argv.includes("--dry");
+const DRY_RUN = Bun.argv.includes("--dry-run");
 const TIMEOUT_MS = parseInt(Bun.env.WORKER_TIMEOUT || "600") * 1000;
 const TODO_FILE = ".ralph/CLEANUP.md";
 const CONTEXT_FILE = ".ralph/CLEANUP_CONTEXT.md";
@@ -169,7 +169,7 @@ while (true) {
   } else if (await hasUncommittedChanges()) {
     console.log("⚠️ Uncommitted changes remain. Auto-committing...");
     await $`git add -A`.quiet();
-    await $`git commit -m "routes: cleanup iteration ${iteration}"`.quiet();
+    await $`git commit -m ${"cleanup: finalize iteration " + iteration}`.quiet();
   }
 
   if (ONCE) break;

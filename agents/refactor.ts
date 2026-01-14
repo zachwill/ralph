@@ -9,6 +9,7 @@ import {
 } from "./internal";
 
 const ONCE = Bun.argv.includes("--once");
+const DRY_RUN = Bun.argv.includes("--dry-run");
 const TIMEOUT_MS = parseInt(Bun.env.WORKER_TIMEOUT || "300") * 1000;
 const REFACTOR_FILE = ".ralph/REFACTOR.md";
 
@@ -82,6 +83,11 @@ while (true) {
 
   if (!(await handleResume())) {
     await runAgent(PROMPT_WITH_REFACTOR, TIMEOUT_MS);
+  }
+
+  if (DRY_RUN) {
+    console.log("\n(dry-run) Stopping after one iteration.");
+    process.exit(0);
   }
 
   if (await recentCommit()) {

@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { existsSync, readFileSync } from "fs";
 import { 
   PI_PATH, 
   timestamp, 
@@ -14,6 +15,7 @@ import {
 // ─────────────────────────────────────────────────────────────
 
 const ONCE = Bun.argv.includes("--once");
+const DRY_RUN = Bun.argv.includes("--dry-run");
 const TIMEOUT_MS = parseInt(Bun.env.WORKER_TIMEOUT || "3000") * 100;
 const PUSH_EVERY = 4;
 const TODO_FILE = ".ralph/TODO.md";
@@ -116,6 +118,11 @@ while (true) {
     // Resume handled it
   } else {
     await runAgent(hasTodos() ? PROMPT_WITH_TODOS : PROMPT_FIND_WORK, TIMEOUT_MS);
+  }
+
+  if (DRY_RUN) {
+    console.log("\n(dry-run) Stopping after one iteration.");
+    Bun.exit(0);
   }
 
   // Check what happened
