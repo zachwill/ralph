@@ -69,7 +69,7 @@ runLoop({
   async supervisor(state) {
     await runPi("Review recent work...", { 
       timeout: "3m",
-      args: ["--model", "o3"] 
+      args: ["--model", "claude-opus-4-5"] 
     });
   },
 });

@@ -24,10 +24,16 @@ export const CONTINUE = 0;
 export const HALT = 1;
 export type ExitCode = typeof CONTINUE | typeof HALT;
 
+/** Options for pi execution */
+export interface PiOptions {
+  timeout?: number | string;
+  args?: string[]; // e.g., ["--model", "claude-opus-4-5"]
+}
+
 /** What the agent should do this iteration */
 export type AgentAction =
-  | { type: "work"; prompt: string }
-  | { type: "generate"; prompt: string } // generate tasks, then exit for review
+  | { type: "work"; prompt: string; options?: PiOptions }
+  | { type: "generate"; prompt: string; options?: PiOptions } // generate tasks, then exit for review
   | { type: "halt"; reason: string };
 
 /** Your agent definition */
@@ -258,7 +264,7 @@ export async function runPi(
   prompt: string,
   options?: {
     timeout?: number | string;
-    args?: string[]; // additional args like "--model", "o3"
+    args?: string[]; // additional args like "--model", "claude-opus-4-5"
   }
 ): Promise<void> {
   const piPath = await getPiPath();
@@ -390,32 +396,46 @@ export async function runLoop(config: AgentConfig): Promise<never> {
         console.log(`\n✅ ${action.reason}`);
         process.exit(0);
 
-      case "generate":
+      case "generate": {
         console.log("🔍 Generating tasks...");
         if (dryRun) {
           console.log("\n(dry-run) Would run prompt:\n");
           console.log(action.prompt);
+          if (action.options?.args?.length) {
+            console.log(`\nWith args: ${action.options.args.join(" ")}`);
+          }
           process.exit(0);
         }
-        await runPi(action.prompt, { timeout: timeoutMs });
+        await runPi(action.prompt, {
+          timeout: action.options?.timeout ?? timeoutMs,
+          args: action.options?.args,
+        });
         await ensureCommit("chore: generate tasks");
         console.log(
           `\n✅ Tasks written to ${config.taskFile} — exiting for review`
         );
         process.exit(0);
+      }
 
-      case "work":
+      case "work": {
         if (state.nextTodo) {
           console.log(`▶ Task: ${state.nextTodo}`);
         }
         if (dryRun) {
           console.log("\n(dry-run) Would run prompt:\n");
           console.log(action.prompt);
+          if (action.options?.args?.length) {
+            console.log(`\nWith args: ${action.options.args.join(" ")}`);
+          }
           process.exit(0);
         }
-        await runPi(action.prompt, { timeout: timeoutMs });
+        await runPi(action.prompt, {
+          timeout: action.options?.timeout ?? timeoutMs,
+          args: action.options?.args,
+        });
         await ensureCommit(`chore: iteration ${iteration}`);
         break;
+      }
     }
 
     // Track commits

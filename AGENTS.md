@@ -27,7 +27,7 @@ runLoop({
   // Optional: supervisor function (can run anything)
   async supervisor(state: LoopState) {
     // Run pi with different options
-    await runPi("Review the work...", { timeout: "3m", args: ["--model", "o3"] });
+    await runPi("Review the work...", { timeout: "3m", args: ["--model", "claude-opus-4-5"] });
 
     // Or run a completely different command
     await runCommand(["bun", "agents/supervisor.ts"]);
@@ -89,7 +89,7 @@ runLoop({
     // Option 1: Different prompt with different model
     await runPi("Review recent work...", {
       timeout: "3m",
-      args: ["--model", "o3"],
+      args: ["--model", "claude-opus-4-5"],
     });
 
     // Option 2: Run a different script entirely
