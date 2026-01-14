@@ -50,8 +50,11 @@ const promptFindWorkWithContext = (context: string) => `
 - .ralph/TODO.md has no actionable items. Wipe it clean and start fresh.
 - Use the following goal as context for what tasks to add (treat it like instructions from the user):
 
+<instructions>
 ${context}
+</instructions>
 
+TASK:
 - Look through the codebase and add useful work items to .ralph/TODO.md.
 - Commit: git add -A && git commit -m "<what you added>"
 - Exit after committing. Don't do any coding yet.
