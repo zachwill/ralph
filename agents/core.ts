@@ -231,7 +231,7 @@ async function autoCommit(message: string): Promise<void> {
 async function push(): Promise<void> {
   console.log("🚀 Pushing to remote...");
   try {
-    await $`git push origin main`;
+    await $`git push origin HEAD`;
   } catch (e) {
     console.log("⚠️  Push failed (non-fatal)");
   }
