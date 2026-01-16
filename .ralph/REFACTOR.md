@@ -1,6 +1,6 @@
 # Refactor Backlog
 
-- [ ] `agents/core.ts`
+- [x] `agents/core.ts`
 - [ ] `agents/ralph.ts`
 - [ ] `agents/refactor.ts`
 - [ ] `agents/cleanup.ts`
