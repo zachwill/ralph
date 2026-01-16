@@ -1,14 +1,14 @@
 #!/usr/bin/env bun
-import { loop, work, generate } from "./core";
+import { generate, loop, work } from "./core";
 
-loop({
-  name: "refactor",
-  taskFile: ".ralph/REFACTOR.md",
-  timeout: "5m",
+function formatContextBlock(context: string | null): string {
+  if (!context) return "";
 
-  run(state) {
-    if (state.hasTodos) {
-      return work(`
+  return `Use this goal as context:\n\n<instructions>\n${context}\n</instructions>\n\n`;
+}
+
+function buildRefactorWorkPrompt(): string {
+  return `
         Refactor ONE file from .ralph/REFACTOR.md (the first unchecked item).
 
         1. Pick the first unchecked item
@@ -20,14 +20,13 @@ loop({
         When done:
         - git add -A && git commit -m "refactor: <scope>"
         - Exit
-      `);
-    }
+      `;
+}
 
-    const contextBlock = state.context
-      ? `Use this goal as context:\n\n<instructions>\n${state.context}\n</instructions>\n\n`
-      : "";
+function buildSeedRefactorTasksPrompt(context: string | null): string {
+  const contextBlock = formatContextBlock(context);
 
-    return generate(`
+  return `
       .ralph/REFACTOR.md has no actionable items. Wipe it clean and start fresh.
       ${contextBlock}
       - Look through the codebase and identify files that need refactoring
@@ -35,6 +34,17 @@ loop({
       - Format each item as: - [ ] \`path/to/file.ts\`
       - Commit: git add -A && git commit -m "chore: seed refactor tasks"
       - Exit after committing. Don't do any refactoring yet.
-    `);
+    `;
+}
+
+loop({
+  name: "refactor",
+  taskFile: ".ralph/REFACTOR.md",
+  timeout: "5m",
+
+  run(state) {
+    if (state.hasTodos) return work(buildRefactorWorkPrompt());
+
+    return generate(buildSeedRefactorTasksPrompt(state.context));
   },
 });
