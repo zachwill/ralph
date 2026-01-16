@@ -1,7 +1,7 @@
 # Refactor Backlog
 
 - [x] `agents/core.ts`
-- [ ] `agents/ralph.ts`
+- [x] `agents/ralph.ts`
 - [ ] `agents/refactor.ts`
 - [ ] `agents/cleanup.ts`
 - [ ] `agents/examples/ralph-with-supervisor.ts`
