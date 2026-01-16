@@ -92,6 +92,12 @@ export interface LoopConfig {
   /** Max iterations before forced exit (default: 400) */
   maxIterations?: number;
 
+  /**
+   * If true, the loop never exits just because the task file is "done".
+   * When there are no remaining todos, your run(state) function should typically return generate().
+   */
+  continuous?: boolean;
+
   /** Optional supervisor */
   supervisor?: SupervisorConfig;
 
@@ -388,9 +394,9 @@ export async function loop(config: LoopConfig): Promise<never> {
   }
 
   // Parse config
-  const defaultTimeoutMs = parseTimeout(config.timeout);
   const pushEvery = config.pushEvery ?? 4;
   const maxIterations = config.maxIterations ?? 400;
+  const continuous = config.continuous ?? false;
 
   // CLI flags
   const once = hasFlag("--once");
@@ -461,9 +467,10 @@ export async function loop(config: LoopConfig): Promise<never> {
       case "generate": {
         console.log("🔍 Generating tasks...");
         const prompt = withResume(action._prompt!, hasUncommittedChanges);
-        const timeoutMs = action._options?.timeout
-          ? parseTimeout(action._options.timeout)
-          : defaultTimeoutMs;
+        const runOptions: RunOptions = {
+          ...action._options,
+          timeout: action._options?.timeout ?? config.timeout,
+        };
 
         if (dryRun) {
           console.log("\n(dry-run) Prompt:\n");
@@ -474,8 +481,24 @@ export async function loop(config: LoopConfig): Promise<never> {
           process.exit(0);
         }
 
-        await runPi(prompt, { model: action._options?.model, timeout: timeoutMs });
+        await runPi(prompt, runOptions);
         await ensureCommit("chore: generate tasks");
+
+        // Guard: in continuous mode, prevent infinite generate→generate loops
+        // if task generation fails to produce any unchecked todos.
+        if (continuous) {
+          const generatedTodos = getUncheckedTodos(readFile(config.taskFile));
+          if (generatedTodos.length === 0) {
+            console.log(
+              `\n🛑 Continuous mode: task generation produced no unchecked todos in ${config.taskFile}`
+            );
+            console.log(
+              "Expected markdown checkboxes like: - [ ] <task>. Stopping to avoid an infinite loop."
+            );
+            process.exit(1);
+          }
+        }
+
         console.log(`\n✅ Tasks written to ${config.taskFile}`);
         break;
       }
@@ -486,9 +509,10 @@ export async function loop(config: LoopConfig): Promise<never> {
         }
 
         const prompt = withResume(action._prompt!, hasUncommittedChanges);
-        const timeoutMs = action._options?.timeout
-          ? parseTimeout(action._options.timeout)
-          : defaultTimeoutMs;
+        const runOptions: RunOptions = {
+          ...action._options,
+          timeout: action._options?.timeout ?? config.timeout,
+        };
 
         if (dryRun) {
           console.log("\n(dry-run) Prompt:\n");
@@ -499,7 +523,7 @@ export async function loop(config: LoopConfig): Promise<never> {
           process.exit(0);
         }
 
-        await runPi(prompt, { model: action._options?.model, timeout: timeoutMs });
+        await runPi(prompt, runOptions);
         await ensureCommit(`chore: iteration ${iteration}`);
         break;
       }
@@ -516,7 +540,7 @@ export async function loop(config: LoopConfig): Promise<never> {
 
     // Check if done
     const updatedTodos = getUncheckedTodos(readFile(config.taskFile));
-    if (updatedTodos.length === 0 && action._type === "work") {
+    if (!continuous && updatedTodos.length === 0 && action._type === "work") {
       console.log("\n✅ All tasks complete");
       process.exit(0);
     }

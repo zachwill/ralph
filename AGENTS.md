@@ -19,6 +19,7 @@ loop({
   timeout: "5m",                // Per-run timeout
   pushEvery: 4,                 // Push every N commits (default: 4)
   maxIterations: 400,           // Safety limit (default: 400)
+  continuous: false,            // If true, never stop just because the task file is "done"
   supervisor: { ... },          // Optional
 
   run(state) {
@@ -139,6 +140,7 @@ await runCommand(["bun", "script.ts"], { timeout?: string })
 4. **Max iterations** — Default 400, prevents runaway loops.
 5. **Timeout** — Kills stuck agents.
 6. **Task file** — Auto-created if missing.
+7. **Continuous mode** — If enabled, the loop won’t exit just because all tasks are complete. (Guard: if a generate step produces 0 unchecked todos, the loop exits to avoid an infinite generate→generate spin.)
 
 ## Timeout Format
 
@@ -194,3 +196,4 @@ See `agents/examples/` for:
 - `ralph-with-planner.ts` — Different model for task generation
 - `ralph-with-supervisor.ts` — Full supervisor with custom logic
 - `ralph-with-simple-supervisor.ts` — Supervisor from just a prompt
+- `ralph-continuous.ts` — Continuous mode (regenerate tasks and keep going)

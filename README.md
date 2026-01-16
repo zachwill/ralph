@@ -21,6 +21,7 @@ loop({
   name: "my-loop",
   taskFile: ".ralph/TODO.md",
   timeout: "5m",
+  continuous: false, // optional: don't exit just because the task file is done
 
   run(state) {
     if (state.hasTodos) {
@@ -46,6 +47,7 @@ That's it. The framework handles:
 - Push every 4 commits
 - Max 400 iterations safety limit
 - Timeout protection
+- Optional continuous mode (don’t exit just because the task file is done)
 
 ## Actions
 
@@ -148,6 +150,21 @@ loop({
   // ...
 });
 ```
+
+## Continuous mode
+
+If you want a loop that keeps going even after it finishes the current todo list, set:
+
+```ts
+continuous: true
+```
+
+Behavior:
+- When the last unchecked task is completed, the loop will *not* exit; your `run(state)` function can return `generate()` to create the next backlog.
+- Guardrail: in `continuous` mode, if a `generate()` run produces **zero** unchecked todos, the loop exits with an error to avoid an infinite generate→generate spin.
+
+Example:
+- `agents/examples/ralph-continuous.ts`
 
 ## Included Agents
 
