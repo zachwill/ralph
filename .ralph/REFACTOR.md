@@ -6,5 +6,5 @@
 - [x] `agents/cleanup.ts`
 - [x] `agents/examples/ralph-with-supervisor.ts`
 - [x] `agents/examples/ralph-with-simple-supervisor.ts`
-- [ ] `agents/examples/ralph-with-planner.ts`
+- [x] `agents/examples/ralph-with-planner.ts`
 - [ ] `agents/examples/ralph-continuous.ts`
