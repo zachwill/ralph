@@ -19,7 +19,7 @@
  *   - model: Single model (e.g., "gpt-5.2")
  *   - provider: Provider (e.g., "openai", "anthropic")
  *   - models: Limit cycling (e.g., "sonnet:high,haiku:low")
- *   - thinking: Starting level ("low" | "medium" | "high")
+ *   - thinking: Starting level (off|minimal|low|medium|high|xhigh)
  *   - tools: Restrict tools (e.g., "read,grep,find,ls" for read-only)
  *   - timeout: Per-run timeout (e.g., "5m")
  */
@@ -27,6 +27,24 @@
 import { $, spawn } from "bun";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname } from "path";
+
+import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
+import type { AssistantMessage, Model } from "@mariozechner/pi-ai";
+import {
+  AuthStorage,
+  ModelRegistry,
+  SessionManager,
+  createAgentSession,
+  createBashTool,
+  createEditTool,
+  createFindTool,
+  createGrepTool,
+  createLsTool,
+  createReadTool,
+  createWriteTool,
+  type AgentSessionEvent,
+  type Tool,
+} from "@mariozechner/pi-coding-agent";
 
 // ─────────────────────────────────────────────────────────────
 // Types
@@ -48,8 +66,8 @@ export interface RunOptions {
    */
   models?: string;
 
-  /** Starting thinking level: "low", "medium", or "high" */
-  thinking?: "low" | "medium" | "high";
+  /** Starting thinking level: off|minimal|low|medium|high|xhigh */
+  thinking?: ThinkingLevel;
 
   /**
    * Restrict available tools (comma-separated).
@@ -386,30 +404,22 @@ function extractToolDetail(input: unknown): string {
   return "";
 }
 
-function processEvent(event: unknown, stats: RunStats): void {
-  if (typeof event !== "object" || event === null) return;
-
-  const e = event as Record<string, unknown>;
-
-  // tool_execution_start — pi's actual event when a tool starts running
-  if (e.type === "tool_execution_start") {
-    const name = String(e.toolName ?? "unknown");
-    const args = e.args as Record<string, unknown> | undefined;
+function processEvent(event: AgentSessionEvent, stats: RunStats): void {
+  // tool_execution_start — pi's event when a tool starts running
+  if (event.type === "tool_execution_start") {
+    const name = event.toolName;
 
     stats.tools.set(name, (stats.tools.get(name) ?? 0) + 1);
-    const detail = extractToolDetail(args);
+    const detail = extractToolDetail(event.args);
     logToolCall(name, detail);
+    return;
   }
 
-  // message_end — extract usage stats
-  if (e.type === "message_end") {
-    const msg = e.message as Record<string, unknown> | undefined;
-    const usage = msg?.usage as Record<string, number> | undefined;
-    if (usage) {
-      // pi uses "input" and "output", not "input_tokens"/"output_tokens"
-      stats.inputTokens += usage.input ?? usage.input_tokens ?? usage.inputTokens ?? 0;
-      stats.outputTokens += usage.output ?? usage.output_tokens ?? usage.outputTokens ?? 0;
-    }
+  // message_end — extract usage stats from assistant messages
+  if (event.type === "message_end" && event.message.role === "assistant") {
+    const msg = event.message as AssistantMessage;
+    stats.inputTokens += msg.usage?.input ?? 0;
+    stats.outputTokens += msg.usage?.output ?? 0;
   }
 }
 
@@ -473,76 +483,230 @@ function resolveTimeoutMs(timeout?: number | string): number {
 // Pi Runner (exported for supervisor use)
 // ─────────────────────────────────────────────────────────────
 
-let _piPath: string | null = null;
+type ScopedModelSpec = { model: Model<any>; thinkingLevel: ThinkingLevel };
 
-async function getPiPath(): Promise<string> {
-  if (_piPath) return _piPath;
+type ResolvedRunModel = {
+  model?: Model<any>;
+  thinkingLevel?: ThinkingLevel;
+  scopedModels?: ScopedModelSpec[];
+};
 
-  _piPath = (await $`which pi`.text()).trim();
-  if (!_piPath) throw new Error("Could not find 'pi' in PATH");
-
-  return _piPath;
+function parseCsvList(value?: string): string[] {
+  if (!value) return [];
+  return value
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
-function buildPiArgs(options?: RunOptions): string[] {
-  const args: string[] = [];
-  if (options?.model) args.push("--model", options.model);
-  if (options?.provider) args.push("--provider", options.provider);
-  if (options?.models) args.push("--models", options.models);
-  if (options?.thinking) args.push("--thinking", options.thinking);
-  if (options?.tools) args.push("--tools", options.tools);
-  return args;
+function buildToolsForRun(cwd: string, toolsCsv?: string): Tool[] | undefined {
+  if (!toolsCsv) return undefined;
+
+  const requested = parseCsvList(toolsCsv);
+  if (requested.length === 0) return undefined;
+
+  const toolFactories: Record<string, (cwd: string) => Tool> = {
+    read: createReadTool,
+    bash: createBashTool,
+    edit: createEditTool,
+    write: createWriteTool,
+    grep: createGrepTool,
+    find: createFindTool,
+    ls: createLsTool,
+  };
+
+  const tools: Tool[] = [];
+  for (const name of requested) {
+    const factory = toolFactories[name];
+    if (!factory) {
+      console.log(`${colors.dim}⚠️  Unknown tool: "${name}" (ignored)${colors.reset}`);
+      continue;
+    }
+    tools.push(factory(cwd));
+  }
+
+  return tools.length > 0 ? tools : undefined;
+}
+
+function resolveModelString(
+  modelRegistry: ModelRegistry,
+  model: string,
+  provider?: string
+): Model<any> | undefined {
+  // Support passing provider/model as a single string.
+  if (model.includes("/")) {
+    const [p, ...rest] = model.split("/");
+    return modelRegistry.find(p, rest.join("/"));
+  }
+
+  if (provider) return modelRegistry.find(provider, model);
+
+  // Best-effort fallback (exact id/name, then partial id/name).
+  const all = modelRegistry.getAll();
+  const exactId = all.find((m) => m.id === model);
+  if (exactId) return exactId;
+
+  const exactName = all.find((m) => m.name === model);
+  if (exactName) return exactName;
+
+  const needle = model.toLowerCase();
+  return all.find((m) => m.id.toLowerCase().includes(needle) || m.name.toLowerCase().includes(needle));
+}
+
+function parseModelToken(
+  token: string,
+  fallbackProvider: string | undefined,
+  fallbackThinking: ThinkingLevel | undefined
+): { provider?: string; modelId: string; thinkingLevel: ThinkingLevel } {
+  const [modelPartRaw, thinkingRaw] = token.split(":").map((s) => s.trim());
+  const thinkingLevel = (thinkingRaw as ThinkingLevel) || fallbackThinking || "off";
+
+  if (modelPartRaw.includes("/")) {
+    const [provider, ...rest] = modelPartRaw.split("/");
+    return { provider, modelId: rest.join("/"), thinkingLevel };
+  }
+
+  return { provider: fallbackProvider, modelId: modelPartRaw, thinkingLevel };
+}
+
+async function resolveRunModel(options: RunOptions | undefined, modelRegistry: ModelRegistry): Promise<ResolvedRunModel> {
+  const provider = options?.provider;
+  const thinkingLevel = options?.thinking;
+
+  if (options?.model) {
+    const resolved = resolveModelString(modelRegistry, options.model, provider);
+    if (!resolved) {
+      throw new Error(
+        `Unknown model: ${provider ? `${provider}/` : ""}${options.model}. ` +
+          `Try provider/model (e.g. "anthropic/claude-sonnet-4-5") or pass { provider, model }.`
+      );
+    }
+    return { model: resolved, thinkingLevel };
+  }
+
+  if (options?.models) {
+    const specs = parseCsvList(options.models);
+    const scopedModels: ScopedModelSpec[] = [];
+
+    for (const spec of specs) {
+      const parsed = parseModelToken(spec, provider, thinkingLevel);
+      const resolved = resolveModelString(modelRegistry, parsed.modelId, parsed.provider);
+      if (!resolved) {
+        throw new Error(`Unknown model in models list: "${spec}"`);
+      }
+      scopedModels.push({ model: resolved, thinkingLevel: parsed.thinkingLevel });
+    }
+
+    // Pick the first model with auth configured.
+    for (const spec of scopedModels) {
+      const key = await modelRegistry.getApiKey(spec.model);
+      if (key) return { model: spec.model, thinkingLevel: spec.thinkingLevel, scopedModels };
+    }
+
+    // No auth found; still return the first model so pi can surface a useful auth error.
+    if (scopedModels.length > 0) {
+      return { model: scopedModels[0].model, thinkingLevel: scopedModels[0].thinkingLevel, scopedModels };
+    }
+  }
+
+  // If only provider is given, pick the first available model for that provider.
+  if (provider) {
+    const available = modelRegistry.getAvailable();
+    const candidate = available.find((m) => m.provider === provider);
+    if (candidate) return { model: candidate, thinkingLevel };
+  }
+
+  // Let pi resolve defaults from settings and available models.
+  return { thinkingLevel };
+}
+
+function getLastAssistantMessage(messages: unknown[]): AssistantMessage | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i] as { role?: string };
+    if (m?.role === "assistant") return messages[i] as AssistantMessage;
+  }
+  return undefined;
 }
 
 export async function runPi(prompt: string, options?: RunOptions): Promise<void> {
-  const piPath = await getPiPath();
+  const cwd = process.cwd();
   const timeoutMs = resolveTimeoutMs(options?.timeout);
-  const args = buildPiArgs(options);
   const role = options?.role ?? "worker";
 
   const roleColor = role === "supervisor" ? colors.supervisor : colors.worker;
   console.log(`${roleColor}[${role.toUpperCase()}]${colors.reset} Starting...\n`);
 
-  const proc = spawn(
-    [piPath, "--mode", "json", "-p", "--no-session", prompt, ...args],
-    { stdout: "pipe", stderr: "inherit" }
-  );
+  // Use the SDK directly (no subprocess JSONL parsing).
+  const authStorage = new AuthStorage();
+  const modelRegistry = new ModelRegistry(authStorage);
 
-  const stats: RunStats = { tools: new Map(), inputTokens: 0, outputTokens: 0 };
+  const resolvedModel = await resolveRunModel(options, modelRegistry);
+  const tools = buildToolsForRun(cwd, options?.tools);
 
-  // Timeout handling
-  const timeoutId = setTimeout(() => {
-    console.log(`\n⏰ Timed out after ${timeoutMs / 1000}s`);
-    proc.kill();
-  }, timeoutMs);
+  const { session, modelFallbackMessage } = await createAgentSession({
+    cwd,
+    authStorage,
+    modelRegistry,
+    sessionManager: SessionManager.inMemory(),
+    tools,
+    model: resolvedModel.model,
+    thinkingLevel: resolvedModel.thinkingLevel,
+    scopedModels: resolvedModel.scopedModels,
+  });
 
-  // Stream JSONL events
-  let buffer = "";
-  const reader = proc.stdout.getReader();
-  const decoder = new TextDecoder();
-
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const result = Bun.JSONL.parseChunk(buffer);
-
-      for (const event of result.values) {
-        processEvent(event, stats);
-      }
-
-      buffer = buffer.slice(result.read);
-    }
-  } finally {
-    clearTimeout(timeoutId);
+  if (modelFallbackMessage) {
+    console.log(`${colors.dim}${modelFallbackMessage}${colors.reset}\n`);
   }
 
-  await proc.exited;
+  if (!session.model) {
+    session.dispose();
+    throw new Error(modelFallbackMessage ?? "No model available (check pi auth/settings)");
+  }
+
+  const stats: RunStats = { tools: new Map(), inputTokens: 0, outputTokens: 0 };
+  const unsubscribe = session.subscribe((event) => processEvent(event, stats));
+
+  let timedOut = false;
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    console.log(`\n⏰ Timed out after ${timeoutMs / 1000}s`);
+    session.abort().catch(() => {});
+  }, timeoutMs);
+
+  let runError: unknown;
+
+  try {
+    await session.prompt(prompt);
+  } catch (err) {
+    runError = err;
+  } finally {
+    clearTimeout(timeoutId);
+    unsubscribe();
+  }
+
+  const lastAssistant = getLastAssistantMessage(session.state.messages as unknown[]);
+  const stopReason = lastAssistant?.stopReason;
+
+  session.dispose();
 
   console.log("");
   logRunSummary(stats, role);
+
+  if (timedOut) {
+    throw new Error(`Timed out after ${timeoutMs / 1000}s`);
+  }
+
+  if (stopReason === "error") {
+    throw new Error(lastAssistant?.errorMessage ?? "pi: model error");
+  }
+
+  if (stopReason === "aborted") {
+    throw new Error("pi: aborted");
+  }
+
+  if (runError) {
+    throw runError;
+  }
 }
 
 /** Run an arbitrary command (for advanced supervisor use) */

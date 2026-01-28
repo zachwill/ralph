@@ -176,6 +176,6 @@ Example:
 
 ## Requirements
 
-- `pi` in PATH
 - Git repository
 - Bun runtime
+- pi auth configured (e.g. `~/.pi/agent/auth.json` or provider API key env vars)

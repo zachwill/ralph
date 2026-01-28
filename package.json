@@ -8,6 +8,9 @@
   "engines": {
     "bun": ">=1.0.0"
   },
+  "dependencies": {
+    "@mariozechner/pi-coding-agent": "^0.50.0"
+  },
   "scripts": {
     "ralph": "bun agents/ralph.ts",
     "refactor": "bun agents/refactor.ts",
