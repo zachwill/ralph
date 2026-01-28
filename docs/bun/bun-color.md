@@ -109,4 +109,4 @@ const red = color("#f00", "css"); // becomes "red" in bundle
 
 ## References
 
-- https://bun.sh/docs/api/color
+- https://bun.com/docs/api/color
