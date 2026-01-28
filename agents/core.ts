@@ -16,7 +16,7 @@
  *   });
  *
  * RunOptions (for work, generate, supervisor):
- *   - model: Single model (e.g., "gpt-4o-mini")
+ *   - model: Single model (e.g., "gpt-5.2")
  *   - provider: Provider (e.g., "openai", "anthropic")
  *   - models: Limit cycling (e.g., "sonnet:high,haiku:low")
  *   - thinking: Starting level ("low" | "medium" | "high")
@@ -318,15 +318,15 @@ function getUncheckedTodos(content: string): string[] {
 // ─────────────────────────────────────────────────────────────
 
 const colors = {
-  read: Bun.color("cyan", "ansi") ?? "",
-  write: Bun.color("lime", "ansi") ?? "",
-  edit: Bun.color("yellow", "ansi") ?? "",
+  read: Bun.color("limegreen", "ansi") ?? "",
+  write: Bun.color("gold", "ansi") ?? "",
+  edit: Bun.color("gold", "ansi") ?? "",
   bash: Bun.color("orangered", "ansi") ?? "",
   grep: Bun.color("cyan", "ansi") ?? "",
   find: Bun.color("cyan", "ansi") ?? "",
   ls: Bun.color("cyan", "ansi") ?? "",
   worker: Bun.color("dodgerblue", "ansi") ?? "",
-  supervisor: Bun.color("gold", "ansi") ?? "",
+  supervisor: Bun.color("mediumpurple", "ansi") ?? "",
   dim: Bun.color("gray", "ansi") ?? "",
   reset: "\x1b[0m",
 };
