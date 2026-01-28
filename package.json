@@ -1,0 +1,17 @@
+{
+  "name": "ralph",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Autonomous coding loops powered by pi.",
+  "type": "module",
+  "packageManager": "bun@1.3.7",
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "scripts": {
+    "ralph": "bun agents/ralph.ts",
+    "refactor": "bun agents/refactor.ts",
+    "cleanup": "bun agents/cleanup.ts",
+    "roadmap": "bun agents/roadmap.ts"
+  }
+}
