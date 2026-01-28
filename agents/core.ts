@@ -59,6 +59,9 @@ export interface RunOptions {
 
   /** Timeout per run (seconds or string like "5m") */
   timeout?: number | string;
+
+  /** Internal: role for logging (set automatically) */
+  role?: "worker" | "supervisor";
 }
 
 export interface Action {
@@ -160,7 +163,7 @@ export function supervisor(
   return {
     every,
     async run() {
-      await runPi(prompt, runOptions);
+      await runPi(prompt, { ...runOptions, role: "supervisor" });
     },
   };
 }
@@ -311,6 +314,127 @@ function getUncheckedTodos(content: string): string[] {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Colors & Logging
+// ─────────────────────────────────────────────────────────────
+
+const colors = {
+  read: Bun.color("cyan", "ansi") ?? "",
+  write: Bun.color("lime", "ansi") ?? "",
+  edit: Bun.color("yellow", "ansi") ?? "",
+  bash: Bun.color("orangered", "ansi") ?? "",
+  grep: Bun.color("cyan", "ansi") ?? "",
+  find: Bun.color("cyan", "ansi") ?? "",
+  ls: Bun.color("cyan", "ansi") ?? "",
+  worker: Bun.color("dodgerblue", "ansi") ?? "",
+  supervisor: Bun.color("gold", "ansi") ?? "",
+  dim: Bun.color("gray", "ansi") ?? "",
+  reset: "\x1b[0m",
+};
+
+const toolIcons: Record<string, string> = {
+  read: "📖",
+  write: "📝",
+  edit: "✏️ ",
+  bash: "🔧",
+  grep: "🔍",
+  find: "🔎",
+  ls: "📂",
+};
+
+function getToolColor(tool: string): string {
+  return colors[tool as keyof typeof colors] ?? colors.dim;
+}
+
+function logToolCall(tool: string, detail: string): void {
+  const icon = toolIcons[tool] ?? "🔧";
+  const color = getToolColor(tool);
+  const label = tool.toUpperCase().padEnd(5);
+  const truncated = detail.length > 60 ? detail.slice(0, 57) + "..." : detail;
+  console.log(`  ${color}${icon} ${label}${colors.reset} ${colors.dim}${truncated}${colors.reset}`);
+}
+
+interface RunStats {
+  tools: Map<string, number>;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+function logRunSummary(stats: RunStats, role: "worker" | "supervisor"): void {
+  const roleColor = role === "supervisor" ? colors.supervisor : colors.worker;
+  const roleLabel = role.toUpperCase();
+
+  const toolSummary = Array.from(stats.tools.entries())
+    .map(([tool, count]) => `${tool}:${count}`)
+    .join(" ") || "no tools";
+
+  const tokens = stats.inputTokens + stats.outputTokens;
+  const tokenStr = tokens > 0 ? `${(tokens / 1000).toFixed(1)}k tokens` : "";
+  
+  console.log(
+    `  ${roleColor}[${roleLabel}]${colors.reset} ${colors.dim}${tokenStr}${tokenStr && toolSummary ? ", " : ""}${toolSummary}${colors.reset}`
+  );
+}
+
+function extractToolDetail(input: unknown): string {
+  if (typeof input === "string") return input;
+  if (typeof input !== "object" || input === null) return "";
+  
+  const obj = input as Record<string, unknown>;
+  if (obj.path) return String(obj.path);
+  if (obj.command) return String(obj.command);
+  if (obj.pattern) return String(obj.pattern);
+  return "";
+}
+
+function processEvent(event: unknown, stats: RunStats): void {
+  if (typeof event !== "object" || event === null) return;
+
+  const e = event as Record<string, unknown>;
+
+  // Handle tool_use (Anthropic style) - log on start
+  if (e.type === "content_block_start") {
+    const block = e.content_block as Record<string, unknown> | undefined;
+    if (block?.type === "tool_use") {
+      const name = String(block.name ?? "unknown");
+      stats.tools.set(name, (stats.tools.get(name) ?? 0) + 1);
+      // Input comes later in deltas, so we log with empty detail for now
+    }
+  }
+
+  // Handle tool_use input (Anthropic streaming)
+  if (e.type === "tool_use") {
+    const name = String(e.name ?? "unknown");
+    const input = e.input;
+    const detail = extractToolDetail(input);
+    logToolCall(name, detail);
+  }
+
+  // Handle tool calls (OpenAI / generic style)
+  if (e.type === "tool_call_start" || e.type === "tool_call") {
+    const tool = (e.tool ?? e) as Record<string, unknown>;
+    const name = String(tool.name ?? e.name ?? "unknown");
+    const input = tool.input ?? e.input ?? e.arguments;
+    
+    if (!stats.tools.has(name) || e.type === "tool_call") {
+      stats.tools.set(name, (stats.tools.get(name) ?? 0) + 1);
+    }
+    
+    const detail = extractToolDetail(input);
+    if (detail) logToolCall(name, detail);
+  }
+
+  // Usage stats from message_end
+  if (e.type === "message_end" || e.type === "message_stop") {
+    const msg = (e.message ?? e) as Record<string, unknown>;
+    const usage = (msg.usage ?? e.usage) as Record<string, number> | undefined;
+    if (usage) {
+      stats.inputTokens += usage.input_tokens ?? usage.inputTokens ?? 0;
+      stats.outputTokens += usage.output_tokens ?? usage.outputTokens ?? 0;
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
 // Display
 // ─────────────────────────────────────────────────────────────
 
@@ -395,8 +519,51 @@ export async function runPi(prompt: string, options?: RunOptions): Promise<void>
   const piPath = await getPiPath();
   const timeoutMs = resolveTimeoutMs(options?.timeout);
   const args = buildPiArgs(options);
+  const role = options?.role ?? "worker";
 
-  await spawnWithTimeout([piPath, "-p", prompt, ...args], timeoutMs);
+  const roleColor = role === "supervisor" ? colors.supervisor : colors.worker;
+  console.log(`${roleColor}[${role.toUpperCase()}]${colors.reset} Starting...\n`);
+
+  const proc = spawn(
+    [piPath, "--mode", "json", "-p", "--no-session", prompt, ...args],
+    { stdout: "pipe", stderr: "inherit" }
+  );
+
+  const stats: RunStats = { tools: new Map(), inputTokens: 0, outputTokens: 0 };
+
+  // Timeout handling
+  const timeoutId = setTimeout(() => {
+    console.log(`\n⏰ Timed out after ${timeoutMs / 1000}s`);
+    proc.kill();
+  }, timeoutMs);
+
+  // Stream JSONL events
+  let buffer = "";
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const result = Bun.JSONL.parseChunk(buffer);
+
+      for (const event of result.values) {
+        processEvent(event, stats);
+      }
+
+      buffer = buffer.slice(result.read);
+    }
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  await proc.exited;
+
+  console.log("");
+  logRunSummary(stats, role);
 }
 
 /** Run an arbitrary command (for advanced supervisor use) */
@@ -426,6 +593,7 @@ async function runPiAction(
   const runOptions: RunOptions = {
     ...action._options,
     timeout: action._options?.timeout ?? defaultTimeout,
+    role: "worker",
   };
 
   if (flags.dryRun) {
