@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * core.ts — Dead simple autonomous loops.
+ * core.ts - Dead simple autonomous loops.
  *
  * Usage:
  *   import { loop, work, generate, halt, supervisor } from "./core";
@@ -369,7 +369,7 @@ function logRunSummary(stats: RunStats, role: "worker" | "supervisor"): void {
 
   const tokens = stats.inputTokens + stats.outputTokens;
   const tokenStr = tokens > 0 ? `${(tokens / 1000).toFixed(1)}k tokens` : "";
-  
+
   console.log(
     `  ${roleColor}[${roleLabel}]${colors.reset} ${colors.dim}${tokenStr}${tokenStr && toolSummary ? ", " : ""}${toolSummary}${colors.reset}`
   );
@@ -378,7 +378,7 @@ function logRunSummary(stats: RunStats, role: "worker" | "supervisor"): void {
 function extractToolDetail(input: unknown): string {
   if (typeof input === "string") return input;
   if (typeof input !== "object" || input === null) return "";
-  
+
   const obj = input as Record<string, unknown>;
   if (obj.path) return String(obj.path);
   if (obj.command) return String(obj.command);
@@ -391,45 +391,24 @@ function processEvent(event: unknown, stats: RunStats): void {
 
   const e = event as Record<string, unknown>;
 
-  // Handle tool_use (Anthropic style) - log on start
-  if (e.type === "content_block_start") {
-    const block = e.content_block as Record<string, unknown> | undefined;
-    if (block?.type === "tool_use") {
-      const name = String(block.name ?? "unknown");
-      stats.tools.set(name, (stats.tools.get(name) ?? 0) + 1);
-      // Input comes later in deltas, so we log with empty detail for now
-    }
-  }
+  // tool_execution_start — pi's actual event when a tool starts running
+  if (e.type === "tool_execution_start") {
+    const name = String(e.toolName ?? "unknown");
+    const args = e.args as Record<string, unknown> | undefined;
 
-  // Handle tool_use input (Anthropic streaming)
-  if (e.type === "tool_use") {
-    const name = String(e.name ?? "unknown");
-    const input = e.input;
-    const detail = extractToolDetail(input);
+    stats.tools.set(name, (stats.tools.get(name) ?? 0) + 1);
+    const detail = extractToolDetail(args);
     logToolCall(name, detail);
   }
 
-  // Handle tool calls (OpenAI / generic style)
-  if (e.type === "tool_call_start" || e.type === "tool_call") {
-    const tool = (e.tool ?? e) as Record<string, unknown>;
-    const name = String(tool.name ?? e.name ?? "unknown");
-    const input = tool.input ?? e.input ?? e.arguments;
-    
-    if (!stats.tools.has(name) || e.type === "tool_call") {
-      stats.tools.set(name, (stats.tools.get(name) ?? 0) + 1);
-    }
-    
-    const detail = extractToolDetail(input);
-    if (detail) logToolCall(name, detail);
-  }
-
-  // Usage stats from message_end
-  if (e.type === "message_end" || e.type === "message_stop") {
-    const msg = (e.message ?? e) as Record<string, unknown>;
-    const usage = (msg.usage ?? e.usage) as Record<string, number> | undefined;
+  // message_end — extract usage stats
+  if (e.type === "message_end") {
+    const msg = e.message as Record<string, unknown> | undefined;
+    const usage = msg?.usage as Record<string, number> | undefined;
     if (usage) {
-      stats.inputTokens += usage.input_tokens ?? usage.inputTokens ?? 0;
-      stats.outputTokens += usage.output_tokens ?? usage.outputTokens ?? 0;
+      // pi uses "input" and "output", not "input_tokens"/"output_tokens"
+      stats.inputTokens += usage.input ?? usage.input_tokens ?? usage.inputTokens ?? 0;
+      stats.outputTokens += usage.output ?? usage.output_tokens ?? usage.outputTokens ?? 0;
     }
   }
 }
@@ -447,7 +426,7 @@ function printBanner(name: string): void {
 }
 
 function printIteration(n: number, max: number): void {
-  console.log(`\n┌─ Iteration ${n}/${max} — ${timestamp()}`);
+  console.log(`\n┌─ Iteration ${n}/${max} - ${timestamp()}`);
   console.log("└──────────────────────────────────────\n");
 }
 
