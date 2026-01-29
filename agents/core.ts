@@ -286,23 +286,23 @@ async function getCommitCount(): Promise<number> {
 }
 
 async function autoCommit(message: string): Promise<void> {
-  console.log("\n📦 Auto-committing...");
+  console.log("\n[Auto-commit]");
   await $`git add -A`.quiet();
   await $`git commit -m ${message}`.quiet();
 }
 
 async function push(): Promise<void> {
-  console.log("🚀 Pushing to remote...");
+  console.log("[Push]");
   try {
     await $`git push origin HEAD`;
   } catch {
-    console.log("⚠️  Push failed (non-fatal)");
+    console.log("Push failed (non-fatal)");
   }
 }
 
 async function ensureCommit(fallbackMessage: string): Promise<boolean> {
   if (await hasRecentCommit()) {
-    console.log("✅ Committed");
+    console.log("Committed");
     return true;
   }
 
@@ -341,26 +341,26 @@ function getUncheckedTodos(content: string): string[] {
 
 const colors = {
   read: Bun.color("limegreen", "ansi") ?? "",
-  write: Bun.color("gold", "ansi") ?? "",
+  write: Bun.color("orangered", "ansi") ?? "",
   edit: Bun.color("gold", "ansi") ?? "",
-  bash: Bun.color("orangered", "ansi") ?? "",
-  grep: Bun.color("cyan", "ansi") ?? "",
-  find: Bun.color("cyan", "ansi") ?? "",
-  ls: Bun.color("cyan", "ansi") ?? "",
-  worker: Bun.color("dodgerblue", "ansi") ?? "",
-  supervisor: Bun.color("mediumpurple", "ansi") ?? "",
-  dim: Bun.color("gray", "ansi") ?? "",
+  bash: Bun.color("dodgerblue", "ansi") ?? "",
+  grep: Bun.color("hotpink", "ansi") ?? "",
+  find: Bun.color("hotpink", "ansi") ?? "",
+  ls: Bun.color("hotpink", "ansi") ?? "",
+  worker: Bun.color("mediumspringgreen", "ansi") ?? "",
+  supervisor: Bun.color("darkorchid", "ansi") ?? "",
+  dim: Bun.color("lightslategray", "ansi") ?? "",
   reset: "\x1b[0m",
 };
 
 const toolIcons: Record<string, string> = {
-  read: "📖",
-  write: "📝",
-  edit: "✏️ ",
-  bash: "🔧",
-  grep: "🔍",
-  find: "🔎",
-  ls: "📂",
+  read: ">",
+  write: ">",
+  edit: ">",
+  bash: ">",
+  grep: ">",
+  find: ">",
+  ls: ">",
 };
 
 function getToolColor(tool: string): string {
@@ -368,7 +368,7 @@ function getToolColor(tool: string): string {
 }
 
 function logToolCall(tool: string, detail: string): void {
-  const icon = toolIcons[tool] ?? "🔧";
+  const icon = toolIcons[tool] ?? ">";
   const color = getToolColor(tool);
   const label = tool.toUpperCase().padEnd(5);
   const truncated = detail.length > 60 ? detail.slice(0, 57) + "..." : detail;
@@ -508,7 +508,7 @@ function buildToolsForRun(cwd: string, toolsCsv?: string): Tool[] | undefined {
   for (const name of requested) {
     const factory = toolFactories[name];
     if (!factory) {
-      console.log(`${colors.dim}⚠️  Unknown tool: "${name}" (ignored)${colors.reset}`);
+      console.log(`${colors.dim}Unknown tool: "${name}" (ignored)${colors.reset}`);
       continue;
     }
     tools.push(factory(cwd));
@@ -669,7 +669,7 @@ export async function runPi(prompt: string, options?: RunOptions): Promise<void>
   let timedOut = false;
   const timeoutId = setTimeout(() => {
     timedOut = true;
-    console.log(`\n⏰ Timed out after ${timeoutMs / 1000}s`);
+    console.log(`\n[Timeout] ${timeoutMs / 1000}s`);
     session.abort().catch(() => {});
   }, timeoutMs);
 
@@ -719,7 +719,7 @@ export async function runCommand(
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
-    console.log(`\n⏰ Timed out after ${timeoutMs / 1000}s`);
+    console.log(`\n[Timeout] ${timeoutMs / 1000}s`);
     controller.abort();
   }, timeoutMs);
 
@@ -773,7 +773,7 @@ export async function loop(config: LoopConfig): Promise<never> {
   // Validate (use shell to check .git since Bun.file() only works for files)
   const isGitRepo = await $`test -d .git`.nothrow().quiet();
   if (isGitRepo.exitCode !== 0) {
-    console.error("❌ Not a git repository");
+    console.error("Error: Not a git repository");
     process.exit(1);
   }
 
@@ -798,7 +798,7 @@ export async function loop(config: LoopConfig): Promise<never> {
     iteration++;
 
     if (iteration > maxIterations) {
-      console.log(`\n🛑 Max iterations (${maxIterations}) reached`);
+      console.log(`\n[Stop] Max iterations (${maxIterations}) reached`);
       process.exit(0);
     }
 
@@ -821,7 +821,7 @@ export async function loop(config: LoopConfig): Promise<never> {
 
     // Supervisor
     if (shouldRunSupervisor(config, commits)) {
-      console.log("🔮 Running supervisor...");
+      console.log("[Supervisor]");
 
       if (flags.dryRun) {
         console.log("(dry-run) Would run supervisor");
@@ -841,12 +841,12 @@ export async function loop(config: LoopConfig): Promise<never> {
 
     switch (action._type) {
       case "halt": {
-        console.log(`\n✅ ${action._reason}`);
+        console.log(`\n[Done] ${action._reason}`);
         process.exit(0);
       }
 
       case "generate": {
-        console.log("🔍 Generating tasks...");
+        console.log("[Generate]");
 
         await runPiAction("generate", action, uncommittedChanges, config.timeout, flags);
 
@@ -856,7 +856,7 @@ export async function loop(config: LoopConfig): Promise<never> {
           const generatedTodos = getUncheckedTodos(await readTextFile(config.taskFile));
           if (generatedTodos.length === 0) {
             console.log(
-              `\n🛑 Continuous mode: task generation produced no unchecked todos in ${config.taskFile}`
+              `\n[Stop] Continuous mode: task generation produced no unchecked todos in ${config.taskFile}`
             );
             console.log(
               "Expected markdown checkboxes like: - [ ] <task>. Stopping to avoid an infinite loop."
@@ -865,13 +865,13 @@ export async function loop(config: LoopConfig): Promise<never> {
           }
         }
 
-        console.log(`\n✅ Tasks written to ${config.taskFile}`);
+        console.log(`\n[Done] Tasks written to ${config.taskFile}`);
         break;
       }
 
       case "work": {
         if (state.nextTodo) {
-          console.log(`▶ Task: ${state.nextTodo}`);
+          console.log(`> Task: ${state.nextTodo}`);
         }
 
         await runPiAction("work", action, uncommittedChanges, config.timeout, flags);
@@ -892,7 +892,7 @@ export async function loop(config: LoopConfig): Promise<never> {
     // Check if done
     const updatedTodos = getUncheckedTodos(await readTextFile(config.taskFile));
     if (!continuous && updatedTodos.length === 0 && action._type === "work") {
-      console.log("\n✅ All tasks complete");
+      console.log("\n[Done] All tasks complete");
       process.exit(0);
     }
 
