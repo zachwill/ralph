@@ -24,16 +24,18 @@
  *   - timeout: Per-run timeout (e.g., "5m")
  */
 
-import { $, spawn } from "bun";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
-import { dirname } from "path";
+import { $ } from "bun";
+import { mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage, Model } from "@mariozechner/pi-ai";
 import {
   AuthStorage,
+  DefaultResourceLoader,
   ModelRegistry,
   SessionManager,
+  SettingsManager,
   createAgentSession,
   createBashTool,
   createEditTool,
@@ -316,14 +318,16 @@ async function ensureCommit(fallbackMessage: string): Promise<boolean> {
 // File Helpers
 // ─────────────────────────────────────────────────────────────
 
-function readTextFile(path: string): string {
-  return existsSync(path) ? readFileSync(path, "utf-8") : "";
+async function readTextFile(path: string): Promise<string> {
+  const file = Bun.file(path);
+  return (await file.exists()) ? file.text() : "";
 }
 
-function ensureFileExists(path: string, defaultContent = ""): void {
-  if (existsSync(path)) return;
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, defaultContent);
+async function ensureFileExists(path: string, defaultContent = ""): Promise<void> {
+  const file = Bun.file(path);
+  if (await file.exists()) return;
+  await mkdir(dirname(path), { recursive: true });
+  await Bun.write(path, defaultContent);
 }
 
 function getUncheckedTodos(content: string): string[] {
@@ -457,23 +461,8 @@ function withResume(prompt: string, include: boolean): string {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Process Helpers
+// Timeout Helper
 // ─────────────────────────────────────────────────────────────
-
-async function spawnWithTimeout(command: string[], timeoutMs: number): Promise<void> {
-  const proc = spawn(command, {
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-
-  const timeout = setTimeout(() => {
-    console.log(`\n⏰ Timed out after ${timeoutMs / 1000}s`);
-    proc.kill();
-  }, timeoutMs);
-
-  await proc.exited;
-  clearTimeout(timeout);
-}
 
 function resolveTimeoutMs(timeout?: number | string): number {
   return timeout ? parseTimeout(timeout) : DEFAULT_TIMEOUT_MS;
@@ -640,6 +629,16 @@ export async function runPi(prompt: string, options?: RunOptions): Promise<void>
   const authStorage = new AuthStorage();
   const modelRegistry = new ModelRegistry(authStorage);
 
+  // Resource loader discovers AGENTS.md files and injects them into system prompt
+  const resourceLoader = new DefaultResourceLoader({
+    cwd,
+    settingsManager: SettingsManager.inMemory(),
+    noExtensions: true,
+    noSkills: true,
+    noPromptTemplates: true,
+  });
+  await resourceLoader.reload();
+
   const resolvedModel = await resolveRunModel(options, modelRegistry);
   const tools = buildToolsForRun(cwd, options?.tools);
 
@@ -647,6 +646,7 @@ export async function runPi(prompt: string, options?: RunOptions): Promise<void>
     cwd,
     authStorage,
     modelRegistry,
+    resourceLoader,
     sessionManager: SessionManager.inMemory(),
     tools,
     model: resolvedModel.model,
@@ -715,7 +715,19 @@ export async function runCommand(
   options?: { timeout?: number | string }
 ): Promise<void> {
   const timeoutMs = resolveTimeoutMs(options?.timeout);
-  await spawnWithTimeout(command, timeoutMs);
+  const cmd = command.map((c) => $.escape(c)).join(" ");
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    console.log(`\n⏰ Timed out after ${timeoutMs / 1000}s`);
+    controller.abort();
+  }, timeoutMs);
+
+  try {
+    await $`${{ raw: cmd }}`.nothrow();
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -758,8 +770,9 @@ function shouldRunSupervisor(config: LoopConfig, commits: number): boolean {
 }
 
 export async function loop(config: LoopConfig): Promise<never> {
-  // Validate
-  if (!existsSync(".git")) {
+  // Validate (use shell to check .git since Bun.file() only works for files)
+  const isGitRepo = await $`test -d .git`.nothrow().quiet();
+  if (isGitRepo.exitCode !== 0) {
     console.error("❌ Not a git repository");
     process.exit(1);
   }
@@ -773,7 +786,7 @@ export async function loop(config: LoopConfig): Promise<never> {
   const flags = parseCliFlags();
 
   // Ensure task file exists
-  ensureFileExists(config.taskFile, "# Tasks\n\n");
+  await ensureFileExists(config.taskFile, "# Tasks\n\n");
 
   printBanner(config.name);
 
@@ -792,7 +805,7 @@ export async function loop(config: LoopConfig): Promise<never> {
     printIteration(iteration, maxIterations);
 
     // Build state
-    const taskFileContent = readTextFile(config.taskFile);
+    const taskFileContent = await readTextFile(config.taskFile);
     const todos = getUncheckedTodos(taskFileContent);
     const uncommittedChanges = await hasUncommittedChanges();
 
@@ -840,7 +853,7 @@ export async function loop(config: LoopConfig): Promise<never> {
         // Guard: in continuous mode, prevent infinite generate→generate loops
         // if task generation fails to produce any unchecked todos.
         if (continuous) {
-          const generatedTodos = getUncheckedTodos(readTextFile(config.taskFile));
+          const generatedTodos = getUncheckedTodos(await readTextFile(config.taskFile));
           if (generatedTodos.length === 0) {
             console.log(
               `\n🛑 Continuous mode: task generation produced no unchecked todos in ${config.taskFile}`
@@ -877,7 +890,7 @@ export async function loop(config: LoopConfig): Promise<never> {
     }
 
     // Check if done
-    const updatedTodos = getUncheckedTodos(readTextFile(config.taskFile));
+    const updatedTodos = getUncheckedTodos(await readTextFile(config.taskFile));
     if (!continuous && updatedTodos.length === 0 && action._type === "work") {
       console.log("\n✅ All tasks complete");
       process.exit(0);
