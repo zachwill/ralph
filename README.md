@@ -78,7 +78,7 @@ interface RunOptions {
   provider?: string;   // Provider (e.g., "openai", "anthropic")
   models?: string;     // Limit model cycling (e.g., "sonnet:high,haiku:low")
   thinking?: "low" | "medium" | "high";  // Starting thinking level
-  tools?: string;      // Restrict tools (e.g., "read,grep,find,ls")
+  tools?: string;      // Restrict tools (e.g., "read" or "read,bash,edit,write")
   timeout?: number | string;  // Per-run timeout
 }
 ```
@@ -97,7 +97,7 @@ return generate(`...`, {
 return work(`...`, { models: "claude-sonnet,gpt-4o" });
 
 // Read-only mode
-return generate(`Review code...`, { tools: "read,grep,find,ls" });
+return generate(`Review code...`, { tools: "read" });
 ```
 
 ## Supervisor
@@ -144,7 +144,7 @@ loop({
   // Or read-only supervisor
   supervisor: supervisor(`Audit code...`, { 
     every: 6, 
-    tools: "read,grep,find,ls"
+    tools: "read"
   }),
 
   // ...

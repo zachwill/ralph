@@ -20,7 +20,7 @@
  *   - provider: Provider (e.g., "openai", "anthropic")
  *   - models: Limit cycling (e.g., "sonnet:high,haiku:low")
  *   - thinking: Starting level (off|minimal|low|medium|high|xhigh)
- *   - tools: Restrict tools (e.g., "read,grep,find,ls" for read-only)
+ *   - tools: Restrict tools (e.g., "read" for strict read-only)
  *   - timeout: Per-run timeout (e.g., "5m")
  */
 
@@ -39,9 +39,6 @@ import {
   createAgentSession,
   createBashTool,
   createEditTool,
-  createFindTool,
-  createGrepTool,
-  createLsTool,
   createReadTool,
   createWriteTool,
   type AgentSessionEvent,
@@ -73,7 +70,7 @@ export interface RunOptions {
 
   /**
    * Restrict available tools (comma-separated).
-   * Example: "read,grep,find,ls" for read-only mode
+   * Example: "read" for strict read-only mode
    */
   tools?: string;
 
@@ -344,9 +341,6 @@ const colors = {
   write: Bun.color("orangered", "ansi") ?? "",
   edit: Bun.color("gold", "ansi") ?? "",
   bash: Bun.color("dodgerblue", "ansi") ?? "",
-  grep: Bun.color("hotpink", "ansi") ?? "",
-  find: Bun.color("hotpink", "ansi") ?? "",
-  ls: Bun.color("hotpink", "ansi") ?? "",
   worker: Bun.color("mediumspringgreen", "ansi") ?? "",
   supervisor: Bun.color("darkorchid", "ansi") ?? "",
   dim: Bun.color("lightslategray", "ansi") ?? "",
@@ -358,9 +352,6 @@ const toolIcons: Record<string, string> = {
   write: ">",
   edit: ">",
   bash: ">",
-  grep: ">",
-  find: ">",
-  ls: ">",
 };
 
 function getToolColor(tool: string): string {
@@ -499,9 +490,6 @@ function buildToolsForRun(cwd: string, toolsCsv?: string): Tool[] | undefined {
     bash: createBashTool,
     edit: createEditTool,
     write: createWriteTool,
-    grep: createGrepTool,
-    find: createFindTool,
-    ls: createLsTool,
   };
 
   const tools: Tool[] = [];

@@ -9,12 +9,11 @@ This is a self-contained operational guide for using **`pi`** effectively (mostl
 - `pi` runs an LLM “agent session” with:
   - a **model** (provider + model id),
   - a **system prompt** (base prompt + optional appended instructions),
-  - a **toolset** (read/bash/grep/find/ls/edit/write/etc.),
+  - a **toolset** (read/bash/edit/write/etc.),
   - optional **extensions** that can intercept events, add tools/commands, enforce safety, add UI widgets, etc.
 - The agent’s *power* comes from tools:
   - **read**: inspect files
-  - **bash**: run shell commands
-  - **grep/find/ls**: discovery
+  - **bash**: run shell commands (including discovery like `ls`, `find`, `rg`)
   - **edit/write**: modify files
   - questionnaire/question: ask user interactively (not usable in pure non-interactive pipelines)
 
@@ -63,7 +62,7 @@ The subagent example shows a working, parseable invocation:
 ```bash
 pi --mode json -p --no-session \
   --model "anthropic/claude-sonnet-4-5" \
-  --tools "read,bash,grep,find,ls" \
+  --tools "read,bash" \
   --append-system-prompt "/path/to/instructions.md" \
   "Your task prompt here"
 ```
@@ -163,7 +162,7 @@ AUTH_FILE="${AUTH_FILE:-./auth.json}"          # your custom auth
 CWD="${CWD:-$PWD}"
 OUT_FILE="${OUT_FILE:-}"                      # if empty -> stdout
 MODEL="${MODEL:-anthropic/claude-sonnet-4-5}"
-TOOLS="${TOOLS:-read,bash,grep,find,ls}"      # add edit/write if you want modifications
+TOOLS="${TOOLS:-read,bash}"                 # add edit/write if you want modifications
 
 TASK="${1:-}"
 if [[ -z "$TASK" ]]; then
@@ -237,9 +236,9 @@ Even without custom extensions, you can get “elite” reliability by forcing t
 
 ### Recommended tool sets
 - Read-only analysis:
-  - `read,bash,grep,find,ls`
+  - `read,bash`
 - Implementation:
-  - `read,bash,grep,find,ls,edit,write`
+  - `read,bash,edit,write`
 
 ### Prompt pattern that yields stable reports
 In your task prompt, include:
@@ -247,7 +246,7 @@ In your task prompt, include:
 - **Goal** (“produce a Markdown report about X”)
 - **Scope** (“only inspect ./src and ./docs”)
 - **Constraints**:
-  - “Prefer `rg`/`grep` discovery, then `read` the exact files.”
+  - “Prefer `rg` discovery (via bash), then `read` the exact files.”
   - “Summarize tool outputs; don’t paste huge logs.”
   - “If output is too long, create a short summary and list commands to reproduce.”
 
