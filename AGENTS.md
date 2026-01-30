@@ -134,6 +134,11 @@ await runCommand(["bun", "script.ts"], { timeout?: string })
 
 ## Built-in Behaviors
 
+## Dependency management
+
+- Use **Bun** only (`bun install`, `bun add`, `bun remove`).
+- Do **not** use `npm`, `yarn`, or `pnpm`.
+
 1. **Resume** — Uncommitted changes? Framework appends resume instructions.
 2. **Auto-commit** — Agent forgot to commit? We do it.
 3. **Push every N** — Default 4 commits.
