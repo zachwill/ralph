@@ -341,17 +341,17 @@ const colors = {
   write: Bun.color("orangered", "ansi") ?? "",
   edit: Bun.color("gold", "ansi") ?? "",
   bash: Bun.color("dodgerblue", "ansi") ?? "",
-  worker: Bun.color("mediumspringgreen", "ansi") ?? "",
-  supervisor: Bun.color("darkorchid", "ansi") ?? "",
+  worker: Bun.color("hotpink", "ansi") ?? "",
+  supervisor: Bun.color("mediumorchid", "ansi") ?? "",
   dim: Bun.color("lightslategray", "ansi") ?? "",
   reset: "\x1b[0m",
 };
 
 const toolIcons: Record<string, string> = {
+  bash: ">",
+  edit: ">",
   read: ">",
   write: ">",
-  edit: ">",
-  bash: ">",
 };
 
 function getToolColor(tool: string): string {
