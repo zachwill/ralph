@@ -194,6 +194,103 @@ Goal-directed cleanup. Requires `--context` to generate tasks.
 bun agents/cleanup.ts -c "Remove TODO comments"
 ```
 
+### spec-worker.ts
+
+Directory-based spec workflow. Uses `.ralph/SPECS/` with numbered markdown files.
+
+```bash
+bun agents/spec-worker.ts
+bun agents/spec-worker.ts -c "Focus on API layer"
+```
+
+## Spec-Based System (spec-core.ts)
+
+An alternative to the file-based task system for multi-model workflows.
+
+### Core API
+
+```typescript
+import { specLoop, research, implement, specHalt } from "./spec-core";
+```
+
+### specLoop()
+
+```typescript
+specLoop({
+  name: "my-spec-loop",
+  specDir: ".ralph/SPECS",     // Directory for spec files
+  timeout: "5m",
+  continuous: false,           // If true, regenerate specs when empty
+  supervisor: { ... },         // Optional
+
+  run(state) {
+    // Return research(), implement(), or specHalt()
+  },
+});
+```
+
+### Actions
+
+```typescript
+// Research and create a spec file
+research(prompt, options?)
+
+// Implement a spec file
+implement(prompt, options?)
+
+// Stop the loop
+specHalt(reason)
+```
+
+### SpecState
+
+```typescript
+interface SpecState {
+  iteration: number;
+  commits: number;
+  specs: SpecFile[];           // All spec files
+  availableSpecs: SpecFile[];  // Non-WIP specs
+  hasAvailableSpecs: boolean;
+  nextSpec: SpecFile | null;   // First available spec
+  context: string | null;
+  specDir: string;
+}
+```
+
+### SpecFile
+
+```typescript
+interface SpecFile {
+  path: string;      // Full path
+  name: string;      // Filename (e.g., "001-add-validation.md")
+  number: number;    // The numeric prefix (e.g., 1)
+  isWIP: boolean;    // Whether marked as in-progress
+  content: string;   // File contents (without WIP marker)
+}
+```
+
+### Helper Functions
+
+```typescript
+// Create a spec file
+await createSpec(specDir, "add validation", content)
+
+// Mark as WIP
+await markSpecAsWIP(specPath)
+
+// Remove WIP marker
+await unmarkSpecAsWIP(specPath)
+
+// Delete when complete
+await deleteSpec(specPath)
+
+// Build research prompt with "copy/paste for future self" framing
+buildResearchPrompt(specDir, basePrompt, context)
+
+// Build implementation prompt
+buildImplementPrompt(spec, specDir)
+```
+
 ## Examples
 
 See `agents/examples/` for:
@@ -202,3 +299,4 @@ See `agents/examples/` for:
 - `ralph-with-supervisor.ts` — Full supervisor with custom logic
 - `ralph-with-simple-supervisor.ts` — Supervisor from just a prompt
 - `ralph-continuous.ts` — Continuous mode (regenerate tasks and keep going)
+- `spec-continuous.ts` — Spec-based continuous mode with supervisor

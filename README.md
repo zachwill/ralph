@@ -168,11 +168,80 @@ Example:
 
 ## Included Agents
 
-| Agent | Task File | Behavior |
-|-------|-----------|----------|
+| Agent | Task File/Dir | Behavior |
+|-------|---------------|----------|
 | `ralph.ts` | `.ralph/TODO.md` | General worker |
 | `refactor.ts` | `.ralph/REFACTOR.md` | One file at a time |
 | `cleanup.ts` | `.ralph/CLEANUP.md` | Requires `--context` |
+| `spec-worker.ts` | `.ralph/SPECS/` | Directory-based specs (see below) |
+
+## Spec-Based Workflow (Directory Mode)
+
+For multi-model workflows, use the spec-based system which stores tasks as individual files in a directory:
+
+```bash
+bun agents/spec-worker.ts              # Run the spec loop
+bun agents/spec-worker.ts -c "Focus"   # Guide research
+bun agents/spec-worker.ts --dry-run    # Preview prompt
+```
+
+### How it works
+
+1. **Research Phase**: A research model (e.g., Opus) explores the codebase and creates numbered spec files (e.g., `001-add-validation.md`)
+2. **Implementation Phase**: A worker model picks up the next available spec, marks it WIP, implements it, and deletes it when done
+3. **Git History**: Deleted specs are preserved in git history
+
+### Why use this?
+
+- **Model handoff**: Use Opus for deep research, GPT-5.2 for implementation
+- **"Copy/paste for future self"**: The framing that gets the best output from Opus
+- **WIP markers**: Prevent multiple workers from grabbing the same spec
+- **Clean directory**: No crossed-out tasks cluttering your view
+
+### Writing a Spec Loop
+
+```typescript
+import { specLoop, research, implement, specHalt } from "./spec-core";
+
+specLoop({
+  name: "my-spec-loop",
+  specDir: ".ralph/SPECS",
+  timeout: "5m",
+
+  run(state) {
+    if (state.hasAvailableSpecs) {
+      return implement(buildPrompt(state.nextSpec), {
+        model: "gpt-5.2",
+      });
+    }
+
+    return research(`Explore and create a spec...`, {
+      model: "claude-opus-4-5",
+      thinking: "high",
+    });
+  },
+});
+```
+
+### Spec State
+
+```typescript
+state.specs              // All spec files
+state.availableSpecs     // Non-WIP specs
+state.hasAvailableSpecs  // boolean
+state.nextSpec           // Next available spec file
+state.specDir            // The spec directory path
+```
+
+### Spec File Format
+
+Spec files should be named: `<number>-<description>.md` (e.g., `001-add-validation.md`)
+
+When a spec is being worked on, it has a WIP marker at the top:
+
+```markdown
+<!-- WIP: IN PROGRESS -->
+```
 
 ## Requirements
 

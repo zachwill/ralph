@@ -16,6 +16,7 @@
     "ralph": "bun agents/ralph.ts",
     "refactor": "bun agents/refactor.ts",
     "cleanup": "bun agents/cleanup.ts",
-    "roadmap": "bun agents/roadmap.ts"
+    "roadmap": "bun agents/roadmap.ts",
+    "spec-worker": "bun agents/spec-worker.ts"
   }
 }
