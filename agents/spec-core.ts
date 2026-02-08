@@ -114,7 +114,7 @@ export interface SpecFile {
   /** The file contents (without WIP marker if present) */
   content: string;
 
-  /** Raw file contents (including WIP marker if present) */
+  /** Raw file contents (includes WIP marker if present; use for displaying the exact file) */
   rawContent: string;
 }
 
