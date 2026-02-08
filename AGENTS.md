@@ -15,7 +15,9 @@ The main function. Runs until done.
 ```typescript
 loop({
   name: "my-loop",              // For logs
-  taskFile: ".ralph/TODO.md",   // Task tracking
+  taskFile: ".ralph/TODO.md",   // Task tracking (file mode)
+  // OR
+  taskDir: ".ralph/SPECS",      // Task tracking (directory mode)
   timeout: "5m",                // Per-run timeout
   pushEvery: 4,                 // Push every N commits (default: 4)
   maxIterations: 400,           // Safety limit (default: 400)
@@ -79,8 +81,9 @@ interface State {
   iteration: number;
   commits: number;
   hasTodos: boolean;
-  nextTodo: string | null;
-  todos: string[];
+  nextTodo: string | null;       // In taskDir mode: full file content
+  nextTodoFile: string | null;   // Path to task file (taskDir mode only)
+  todos: string[];               // In taskDir mode: available filenames
   context: string | null;
   hasUncommittedChanges: boolean;
 }
@@ -145,7 +148,8 @@ await runCommand(["bun", "script.ts"], { timeout?: string })
 4. **Max iterations** — Default 400, prevents runaway loops.
 5. **Timeout** — Kills stuck agents.
 6. **Task file** — Auto-created if missing.
-7. **Continuous mode** — If enabled, the loop won’t exit just because all tasks are complete. (Guard: if a generate step produces 0 unchecked todos, the loop exits to avoid an infinite generate→generate spin.)
+7. **Task directory** — `taskDir` mode: each task is a numbered `.md` file; WIP-tagged during work, removed on completion.
+8. **Continuous mode** — If enabled, the loop won’t exit just because all tasks are complete. (Guard: if a generate step produces 0 unchecked todos, the loop exits to avoid an infinite generate→generate spin.)
 
 ## Timeout Format
 
@@ -202,3 +206,4 @@ See `agents/examples/` for:
 - `ralph-with-supervisor.ts` — Full supervisor with custom logic
 - `ralph-with-simple-supervisor.ts` — Supervisor from just a prompt
 - `ralph-continuous.ts` — Continuous mode (regenerate tasks and keep going)
+- `ralph-with-specs.ts` — Directory-based specs (taskDir mode)

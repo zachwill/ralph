@@ -25,7 +25,7 @@
  */
 
 import { $ } from "bun";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readdir, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
@@ -97,8 +97,15 @@ export interface LoopConfig {
   /** Name for banner/logs */
   name: string;
 
-  /** Path to the markdown task file (e.g., ".ralph/TODO.md") */
-  taskFile: string;
+  /** Path to the markdown task file (e.g., ".ralph/TODO.md"). Provide this or taskDir. */
+  taskFile?: string;
+
+  /**
+   * Path to a task directory for spec-based workflows (e.g., ".ralph/SPECS").
+   * Each task is a separate numbered .md file. Files are marked WIP during work
+   * and removed on completion. Provide this or taskFile.
+   */
+  taskDir?: string;
 
   /**
    * Timeout per run.
@@ -139,10 +146,13 @@ export interface State {
   /** Whether the task file has unchecked todos */
   hasTodos: boolean;
 
-  /** The text of the next unchecked todo (if any) */
+  /** The text of the next unchecked todo (if any). In taskDir mode, this is the file content. */
   nextTodo: string | null;
 
-  /** All unchecked todos */
+  /** Path to the next task file (taskDir mode only) */
+  nextTodoFile: string | null;
+
+  /** All unchecked todos. In taskDir mode, these are available filenames. */
   todos: string[];
 
   /** Context from --context/-c flag (if provided) */
@@ -330,6 +340,72 @@ async function ensureFileExists(path: string, defaultContent = ""): Promise<void
 function getUncheckedTodos(content: string): string[] {
   const matches = content.matchAll(/^\s*[-*+]\s*\[ \]\s+(.*)$/gm);
   return Array.from(matches, (m) => m[1].trim());
+}
+
+// ─────────────────────────────────────────────────────────────
+// Directory-Based Task Helpers (taskDir mode)
+// ─────────────────────────────────────────────────────────────
+
+/** Marker added to the top of a task file while it's being worked on */
+export const WIP_TAG = "<!-- WIP -->";
+
+/** List .md files in a task directory, sorted by name */
+export async function listTaskFiles(dir: string): Promise<string[]> {
+  try {
+    const entries = await readdir(dir);
+    return entries.filter((f) => f.endsWith(".md")).sort();
+  } catch {
+    return [];
+  }
+}
+
+/** Check if a task file is marked as WIP */
+async function isWip(filePath: string): Promise<boolean> {
+  try {
+    const content = await readTextFile(filePath);
+    return content.trimStart().startsWith(WIP_TAG);
+  } catch {
+    return false;
+  }
+}
+
+/** List task files that are NOT marked WIP (available for work) */
+export async function getAvailableTaskFiles(dir: string): Promise<string[]> {
+  const files = await listTaskFiles(dir);
+  const available: string[] = [];
+  for (const file of files) {
+    if (!(await isWip(`${dir}/${file}`))) {
+      available.push(file);
+    }
+  }
+  return available;
+}
+
+/** Mark a task file as WIP by prepending the WIP tag */
+async function markFileWip(filePath: string): Promise<void> {
+  const content = await readTextFile(filePath);
+  if (!content.trimStart().startsWith(WIP_TAG)) {
+    await Bun.write(filePath, `${WIP_TAG}\n${content}`);
+  }
+}
+
+/** Remove a completed task file */
+async function removeTaskFile(filePath: string): Promise<void> {
+  try {
+    await unlink(filePath);
+  } catch {
+    // File may already be removed
+  }
+}
+
+/** Get the next file number for creating new task files in a directory */
+export function nextFileNumber(files: string[]): string {
+  let max = 0;
+  for (const f of files) {
+    const match = f.match(/^(\d+)/);
+    if (match) max = Math.max(max, parseInt(match[1]));
+  }
+  return String(max + 1).padStart(3, "0");
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -758,6 +834,18 @@ function shouldRunSupervisor(config: LoopConfig, commits: number): boolean {
 }
 
 export async function loop(config: LoopConfig): Promise<never> {
+  // Validate task source
+  if (!config.taskFile && !config.taskDir) {
+    console.error("Error: Provide either taskFile or taskDir");
+    process.exit(1);
+  }
+  if (config.taskFile && config.taskDir) {
+    console.error("Error: Provide either taskFile or taskDir, not both");
+    process.exit(1);
+  }
+
+  const useDir = Boolean(config.taskDir);
+
   // Validate (use shell to check .git since Bun.file() only works for files)
   const isGitRepo = await $`test -d .git`.nothrow().quiet();
   if (isGitRepo.exitCode !== 0) {
@@ -773,8 +861,12 @@ export async function loop(config: LoopConfig): Promise<never> {
   // CLI flags
   const flags = parseCliFlags();
 
-  // Ensure task file exists
-  await ensureFileExists(config.taskFile, "# Tasks\n\n");
+  // Ensure task file/dir exists
+  if (useDir) {
+    await mkdir(config.taskDir!, { recursive: true });
+  } else {
+    await ensureFileExists(config.taskFile!, "# Tasks\n\n");
+  }
 
   printBanner(config.name);
 
@@ -793,15 +885,31 @@ export async function loop(config: LoopConfig): Promise<never> {
     printIteration(iteration, maxIterations);
 
     // Build state
-    const taskFileContent = await readTextFile(config.taskFile);
-    const todos = getUncheckedTodos(taskFileContent);
     const uncommittedChanges = await hasUncommittedChanges();
+
+    let todos: string[];
+    let nextTodo: string | null = null;
+    let nextTodoFile: string | null = null;
+
+    if (useDir) {
+      const available = await getAvailableTaskFiles(config.taskDir!);
+      todos = available;
+      if (available.length > 0) {
+        nextTodoFile = `${config.taskDir}/${available[0]}`;
+        nextTodo = await readTextFile(nextTodoFile);
+      }
+    } else {
+      const taskFileContent = await readTextFile(config.taskFile!);
+      todos = getUncheckedTodos(taskFileContent);
+      nextTodo = todos[0] ?? null;
+    }
 
     const state: State = {
       iteration,
       commits,
       hasTodos: todos.length > 0,
-      nextTodo: todos[0] ?? null,
+      nextTodo,
+      nextTodoFile,
       todos,
       context: flags.context,
       hasUncommittedChanges: uncommittedChanges,
@@ -839,31 +947,54 @@ export async function loop(config: LoopConfig): Promise<never> {
         await runPiAction("generate", action, uncommittedChanges, config.timeout, flags);
 
         // Guard: in continuous mode, prevent infinite generate→generate loops
-        // if task generation fails to produce any unchecked todos.
         if (continuous) {
-          const generatedTodos = getUncheckedTodos(await readTextFile(config.taskFile));
-          if (generatedTodos.length === 0) {
+          let hasNewTasks: boolean;
+          if (useDir) {
+            hasNewTasks = (await getAvailableTaskFiles(config.taskDir!)).length > 0;
+          } else {
+            hasNewTasks = getUncheckedTodos(await readTextFile(config.taskFile!)).length > 0;
+          }
+
+          if (!hasNewTasks) {
+            const taskLocation = config.taskDir ?? config.taskFile;
             console.log(
-              `\n[Stop] Continuous mode: task generation produced no unchecked todos in ${config.taskFile}`
+              `\n[Stop] Continuous mode: task generation produced no tasks in ${taskLocation}`
             );
-            console.log(
-              "Expected markdown checkboxes like: - [ ] <task>. Stopping to avoid an infinite loop."
-            );
+            if (!useDir) {
+              console.log(
+                "Expected markdown checkboxes like: - [ ] <task>. Stopping to avoid an infinite loop."
+              );
+            }
             process.exit(1);
           }
         }
 
-        console.log(`\n[Done] Tasks written to ${config.taskFile}`);
+        const taskLocation = config.taskDir ?? config.taskFile;
+        console.log(`\n[Done] Tasks written to ${taskLocation}`);
         break;
       }
 
       case "work": {
+        // Directory mode: mark file as WIP before work starts
+        if (useDir && state.nextTodoFile) {
+          await markFileWip(state.nextTodoFile);
+        }
+
         if (state.nextTodo) {
-          console.log(`> Task: ${state.nextTodo}`);
+          // Log filename in dir mode, checkbox text in file mode
+          const label = useDir ? (state.todos[0] ?? state.nextTodoFile) : state.nextTodo;
+          console.log(`> Task: ${label}`);
         }
 
         await runPiAction("work", action, uncommittedChanges, config.timeout, flags);
         await ensureCommit(`chore: iteration ${iteration}`);
+
+        // Directory mode: remove completed task file
+        if (useDir && state.nextTodoFile) {
+          await removeTaskFile(state.nextTodoFile);
+          await ensureCommit("chore: complete task");
+        }
+
         break;
       }
     }
@@ -878,8 +1009,14 @@ export async function loop(config: LoopConfig): Promise<never> {
     }
 
     // Check if done
-    const updatedTodos = getUncheckedTodos(await readTextFile(config.taskFile));
-    if (!continuous && updatedTodos.length === 0 && action._type === "work") {
+    let remainingTodos: number;
+    if (useDir) {
+      remainingTodos = (await getAvailableTaskFiles(config.taskDir!)).length;
+    } else {
+      remainingTodos = getUncheckedTodos(await readTextFile(config.taskFile!)).length;
+    }
+
+    if (!continuous && remainingTodos === 0 && action._type === "work") {
       console.log("\n[Done] All tasks complete");
       process.exit(0);
     }

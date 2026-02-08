@@ -166,6 +166,51 @@ Behavior:
 Example:
 - `agents/examples/ralph-continuous.ts`
 
+## Directory-Based Tasks (taskDir)
+
+Instead of a single markdown file with checkboxes, you can use a **directory** where each task is a separate numbered `.md` file. This is ideal for spec-based workflows where one model researches and writes detailed specs, and another model implements them.
+
+```typescript
+loop({
+  name: "my-loop",
+  taskDir: ".ralph/SPECS",   // use taskDir instead of taskFile
+  timeout: "10m",
+
+  run(state) {
+    if (state.hasTodos) {
+      // state.nextTodo = full file content
+      // state.nextTodoFile = path to the file (e.g., ".ralph/SPECS/001-add-auth.md")
+      // state.todos = list of available filenames
+      return work(`Implement this spec:\n${state.nextTodo}`);
+    }
+    return generate(`Create numbered spec files in .ralph/SPECS/`);
+  },
+});
+```
+
+### How it works
+
+1. **Generate** creates numbered files: `001-description.md`, `002-description.md`, etc.
+2. **Work** picks the next available (non-WIP) file
+3. The framework marks the file `<!-- WIP -->` while it's being worked on
+4. The framework **removes the file** when work is complete (git history preserves it)
+
+### WIP safety
+
+When multiple loops run concurrently against the same `taskDir`, the `<!-- WIP -->` tag at the top of a file prevents other loops from picking it up. Only non-WIP files are shown in `state.todos`.
+
+### State in directory mode
+
+| Field | File mode | Directory mode |
+|-------|-----------|----------------|
+| `hasTodos` | Has unchecked checkboxes | Has available (non-WIP) files |
+| `nextTodo` | Checkbox text | Full file content |
+| `nextTodoFile` | `null` | Path to next file |
+| `todos` | Checkbox texts | Available filenames |
+
+Example:
+- `agents/examples/ralph-with-specs.ts`
+
 ## Included Agents
 
 | Agent | Task File | Behavior |
