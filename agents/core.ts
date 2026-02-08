@@ -361,8 +361,12 @@ export async function listTaskFiles(dir: string): Promise<string[]> {
 
 /** Check if a task file is marked as WIP */
 async function isWip(filePath: string): Promise<boolean> {
-  const content = await readTextFile(filePath);
-  return content.trimStart().startsWith(WIP_TAG);
+  try {
+    const content = await readTextFile(filePath);
+    return content.trimStart().startsWith(WIP_TAG);
+  } catch {
+    return false;
+  }
 }
 
 /** List task files that are NOT marked WIP (available for work) */
@@ -978,7 +982,7 @@ export async function loop(config: LoopConfig): Promise<never> {
 
         if (state.nextTodo) {
           // Log filename in dir mode, checkbox text in file mode
-          const label = useDir ? state.todos[0] : state.nextTodo;
+          const label = useDir ? (state.todos[0] ?? state.nextTodoFile) : state.nextTodo;
           console.log(`> Task: ${label}`);
         }
 

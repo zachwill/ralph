@@ -149,7 +149,7 @@ await runCommand(["bun", "script.ts"], { timeout?: string })
 5. **Timeout** — Kills stuck agents.
 6. **Task file** — Auto-created if missing.
 7. **Task directory** — `taskDir` mode: each task is a numbered `.md` file; WIP-tagged during work, removed on completion.
-7. **Continuous mode** — If enabled, the loop won’t exit just because all tasks are complete. (Guard: if a generate step produces 0 unchecked todos, the loop exits to avoid an infinite generate→generate spin.)
+8. **Continuous mode** — If enabled, the loop won’t exit just because all tasks are complete. (Guard: if a generate step produces 0 unchecked todos, the loop exits to avoid an infinite generate→generate spin.)
 
 ## Timeout Format
 
